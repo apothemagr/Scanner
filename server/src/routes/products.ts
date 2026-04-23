@@ -24,6 +24,17 @@ router.get('/lookup', async (req, res) => {
   return res.json(result.rows[0]);
 });
 
+// Αναζήτηση με όνομα
+router.get('/search', async (req, res) => {
+  const { q } = req.query
+  if (!q || String(q).trim().length < 2) return res.json([])
+  const result = await query(
+    `SELECT id, sku, name FROM products WHERE name ILIKE $1 ORDER BY name LIMIT 10`,
+    [`%${String(q).trim()}%`]
+  )
+  return res.json(result.rows)
+})
+
 // Λίστα όλων των προϊόντων
 router.get('/', async (_req, res) => {
   const result = await query(

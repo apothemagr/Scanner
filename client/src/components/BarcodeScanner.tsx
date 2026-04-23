@@ -1,9 +1,14 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
+
+const API = import.meta.env.VITE_API_URL || 'http://localhost:3001/api'
 
 interface Props {
   onScan: (code: string) => void
   placeholder?: string
+  paused?: boolean
+  autoStart?: boolean
 }
+
 
 declare const BarcodeDetector: {
   new(opts: { formats: string[] }): { detect(src: HTMLVideoElement): Promise<{ rawValue: string }[]> }
@@ -12,17 +17,24 @@ declare const BarcodeDetector: {
 
 const STORAGE_KEY = 'scanner_mode'
 
-export default function BarcodeScanner({ onScan, placeholder = 'Σκανάρισμα...' }: Props) {
+export default function BarcodeScanner({ onScan, placeholder = 'Σκανάρισμα...', paused = false, autoStart = false }: Props) {
   const [mode, setMode] = useState<'input' | 'camera'>(
     () => (localStorage.getItem(STORAGE_KEY) as 'input' | 'camera') ?? 'camera'
   )
   const [inputVal, setInputVal] = useState('')
+  const [nameVal, setNameVal] = useState('')
+  const [suggestions, setSuggestions] = useState<{ id: number; sku: string; name: string }[]>([])
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [cameraError, setCameraError] = useState('')
   const videoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const animRef = useRef<number>(0)
   const activeRef = useRef(false)
+  const [scanning, setScanning] = useState(autoStart)
+  const scanLoopRef = useRef(false)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  const detectorRef = useRef<InstanceType<typeof BarcodeDetector> | null>(null)
 
   const stopCamera = () => {
     activeRef.current = false
@@ -36,7 +48,6 @@ export default function BarcodeScanner({ onScan, placeholder = 'Σκανάρισ
     if (activeRef.current) return
     setCameraError('')
 
-    // Έλεγξε αν υποστηρίζεται BarcodeDetector
     if (!('BarcodeDetector' in window)) {
       setCameraError('Ο browser δεν υποστηρίζει αυτόματο scanner. Χρησιμοποίησε χειροκίνητη εισαγωγή.')
       setMode('input')
@@ -44,7 +55,6 @@ export default function BarcodeScanner({ onScan, placeholder = 'Σκανάρισ
     }
 
     try {
-      // Ξεκίνα κάμερα με zoom x3 κατευθείαν
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: { ideal: 'environment' },
@@ -52,44 +62,63 @@ export default function BarcodeScanner({ onScan, placeholder = 'Σκανάρισ
         }
       })
       streamRef.current = stream
-
       if (videoRef.current) {
         videoRef.current.srcObject = stream
         await videoRef.current.play()
       }
-
       activeRef.current = true
-
-      const detector = new BarcodeDetector({
+      detectorRef.current = new BarcodeDetector({
         formats: ['ean_13', 'ean_8', 'qr_code', 'code_128', 'code_39', 'itf', 'upc_a', 'upc_e']
       })
-
-      const scan = async () => {
-        if (!activeRef.current || !videoRef.current) return
-        try {
-          const results = await detector.detect(videoRef.current)
-          if (results.length > 0) {
-            navigator.vibrate?.(100)
-            stopCamera()
-            onScan(results[0].rawValue)
-            setTimeout(() => startCamera(), 600)
-            return
-          }
-        } catch { /* frame not ready */ }
-        animRef.current = requestAnimationFrame(scan)
-      }
-      animRef.current = requestAnimationFrame(scan)
-
     } catch {
       setCameraError('Δεν επιτράπηκε πρόσβαση στην κάμερα. Χρησιμοποίησε χειροκίνητη εισαγωγή.')
       setMode('input')
     }
   }
 
+  const stopScanLoop = () => {
+    scanLoopRef.current = false
+    setScanning(false)
+  }
+
+  const startScanLoop = async () => {
+    if (!activeRef.current || !videoRef.current || !detectorRef.current) return
+    scanLoopRef.current = true
+    setScanning(true)
+
+    while (scanLoopRef.current) {
+      try {
+        const results = await detectorRef.current.detect(videoRef.current)
+        if (results.length > 0) {
+          navigator.vibrate?.(100)
+          onScan(results[0].rawValue)
+          // Μικρή παύση μετά από επιτυχές scan
+          await new Promise(r => setTimeout(r, 1200))
+        } else {
+          await new Promise(r => setTimeout(r, 150))
+        }
+      } catch {
+        await new Promise(r => setTimeout(r, 150))
+      }
+    }
+  }
+
+  const handleToggleScan = () => {
+    if (scanning) {
+      stopScanLoop()
+    } else {
+      startScanLoop()
+    }
+  }
+
   useEffect(() => {
-    startCamera()
-    return () => stopCamera()
+    startCamera().then(() => { if (autoStart) startScanLoop() })
+    return () => { scanLoopRef.current = false; stopCamera() }
   }, [])
+
+  useEffect(() => {
+    if (paused) stopScanLoop()
+  }, [paused])
 
   const switchToInput = () => {
     stopCamera()
@@ -106,45 +135,84 @@ export default function BarcodeScanner({ onScan, placeholder = 'Σκανάρισ
 
   const handleManualSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (!inputVal.trim()) return
-    onScan(inputVal.trim())
-    setInputVal('')
-    // Επιστροφή focus για τον επόμενο handheld scan
-    setTimeout(() => inputRef.current?.focus(), 100)
+    if (inputVal.trim()) {
+      onScan(inputVal.trim())
+      setInputVal('')
+      setTimeout(() => inputRef.current?.focus(), 100)
+    } else if (suggestions.length > 0) {
+      handleSelectSuggestion(suggestions[0].sku)
+    }
+  }
+
+  const handleNameChange = useCallback((val: string) => {
+    setNameVal(val)
+    setSuggestions([])
+    if (searchTimer.current) clearTimeout(searchTimer.current)
+    if (val.trim().length < 2) return
+    searchTimer.current = setTimeout(async () => {
+      const res = await fetch(`${API}/products/search?q=${encodeURIComponent(val.trim())}`)
+      if (res.ok) setSuggestions(await res.json())
+    }, 300)
+  }, [])
+
+  const handleSelectSuggestion = (sku: string) => {
+    setSuggestions([])
+    setNameVal('')
+    onScan(sku)
   }
 
   return (
     <div className="barcode-scanner">
       {mode === 'camera' ? (
         <div className="camera-mode">
-          <video
-            ref={videoRef}
-            className="camera-video"
-            playsInline
-            muted
-          />
-          <div className="scan-overlay">
-            <div className="scan-line" />
-          </div>
+          <video ref={videoRef} className="camera-video" playsInline muted />
+          <button
+            type="button"
+            className={`btn-tap-scan ${scanning ? 'scanning' : ''}`}
+            onClick={handleToggleScan}
+          >
+            {scanning ? '⏹ ΤΕΛΟΣ' : '📷 ΠΑΤΑ ΓΙΑ SCAN'}
+          </button>
           <button type="button" className="btn-secondary btn-cancel-camera" onClick={switchToInput}>
             ⌨️ Χειροκίνητη εισαγωγή
           </button>
         </div>
       ) : (
-        <form onSubmit={handleManualSubmit} className="scanner-input-row">
+        <form onSubmit={handleManualSubmit} className="manual-mode">
+          <button type="button" className="btn-cancel-camera" onClick={switchToCamera}>
+            📷 Κάμερα
+          </button>
           <input
             ref={inputRef}
             type="text"
+            inputMode="numeric"
             value={inputVal}
             onChange={e => setInputVal(e.target.value)}
-            placeholder={placeholder}
+            placeholder="Barcode..."
             autoComplete="off"
             className="scan-input"
           />
-          <button type="submit" className="btn-primary btn-scan-submit">OK</button>
-          <button type="button" className="btn-camera" onClick={switchToCamera}>
-            📷 Κάμερα
-          </button>
+          <div className="name-search-wrap">
+            <input
+              type="text"
+              value={nameVal}
+              onChange={e => handleNameChange(e.target.value)}
+              placeholder="Αναζήτηση με τίτλο..."
+              autoComplete="off"
+              className="scan-input"
+            />
+            {suggestions.length > 0 && (
+              <div className="suggestions">
+                {suggestions.map(s => (
+                  <div key={s.id} className="suggestion-row" onClick={() => handleSelectSuggestion(s.sku)}>
+                    <span className="suggestion-name">{s.name}</span>
+                    <span className="suggestion-sku">{s.sku}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <button type="submit" className="btn-primary" style={{ width: '100%' }}>OK</button>
         </form>
       )}
       {cameraError && <p className="camera-error">{cameraError}</p>}

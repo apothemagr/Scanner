@@ -87,6 +87,40 @@ router.post('/receipts/:id/complete', async (req, res) => {
   return res.json({ success: true });
 });
 
+// Γρήγορη παραλαβή χωρίς session (batch)
+router.post('/receipts/quick', async (req, res) => {
+  const { product_id, location_id, quantity } = req.body;
+  if (!product_id || !location_id || !quantity) {
+    return res.status(400).json({ error: 'product_id, location_id, quantity required' });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    await client.query(
+      `INSERT INTO stock (product_id, location_id, quantity)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (product_id, location_id)
+       DO UPDATE SET quantity = stock.quantity + $3, updated_at = NOW()`,
+      [product_id, location_id, quantity]
+    );
+
+    await client.query(
+      `INSERT INTO stock_movements (product_id, location_id, type, quantity, reference_type)
+       VALUES ($1, $2, 'in', $3, 'quick_receipt')`,
+      [product_id, location_id, quantity]
+    );
+
+    await client.query('COMMIT');
+    return res.json({ success: true });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
+});
+
 // Λίστα ανοιχτών παραλαβών
 router.get('/receipts', async (_req, res) => {
   const result = await query(

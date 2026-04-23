@@ -9,14 +9,6 @@ function App() {
 
   return (
     <div className="app">
-      <header className="app-header">
-        <h1>Αποθήκη</h1>
-        <nav>
-          <Link to="/" className={location.pathname === '/' ? 'active' : ''}>Παραλαβή</Link>
-          <Link to="/scan-out" className={location.pathname === '/scan-out' ? 'active' : ''}>Picking</Link>
-          <Link to="/stock" className={location.pathname === '/stock' ? 'active' : ''}>Απόθεμα</Link>
-        </nav>
-      </header>
       <main className="app-main">
         <Routes>
           <Route path="/" element={<ScanIn />} />
@@ -24,6 +16,20 @@ function App() {
           <Route path="/stock" element={<Stock />} />
         </Routes>
       </main>
+      <nav className="app-footer">
+        <Link to="/" className={location.pathname === '/' ? 'active' : ''}>
+          <span className="nav-icon">📥</span>
+          <span className="nav-label">Παραλαβή</span>
+        </Link>
+        <Link to="/scan-out" className={location.pathname === '/scan-out' ? 'active' : ''}>
+          <span className="nav-icon">📦</span>
+          <span className="nav-label">Picking</span>
+        </Link>
+        <Link to="/stock" className={location.pathname === '/stock' ? 'active' : ''}>
+          <span className="nav-icon">📋</span>
+          <span className="nav-label">Απόθεμα</span>
+        </Link>
+      </nav>
     </div>
   )
 }

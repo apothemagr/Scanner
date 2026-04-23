@@ -6,11 +6,16 @@ import locationsRouter from './routes/locations';
 import stockRouter from './routes/stock';
 import scanInRouter from './routes/scanIn';
 import scanOutRouter from './routes/scanOut';
+import { syncUrls } from '../scripts/sync-urls';
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+// Sync URLs κάθε 24 ώρες
+syncUrls().catch(console.error)
+setInterval(() => syncUrls().catch(console.error), 24 * 60 * 60 * 1000)
 
 app.use(cors());
 app.use(express.json());
