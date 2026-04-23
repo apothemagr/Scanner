@@ -1,70 +1,107 @@
 import { useEffect, useRef, useState } from 'react'
-import { Html5Qrcode } from 'html5-qrcode'
 
 interface Props {
   onScan: (code: string) => void
   placeholder?: string
 }
 
+declare const BarcodeDetector: {
+  new(opts: { formats: string[] }): { detect(src: HTMLVideoElement): Promise<{ rawValue: string }[]> }
+  getSupportedFormats(): Promise<string[]>
+}
+
+const STORAGE_KEY = 'scanner_mode'
+
 export default function BarcodeScanner({ onScan, placeholder = 'Σκανάρισμα...' }: Props) {
-  const [mode, setMode] = useState<'input' | 'camera'>('input')
+  const [mode, setMode] = useState<'input' | 'camera'>(
+    () => (localStorage.getItem(STORAGE_KEY) as 'input' | 'camera') ?? 'camera'
+  )
   const [inputVal, setInputVal] = useState('')
   const [cameraError, setCameraError] = useState('')
-  const [scanning, setScanning] = useState(false)
-  const scannerRef = useRef<Html5Qrcode | null>(null)
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const streamRef = useRef<MediaStream | null>(null)
+  const animRef = useRef<number>(0)
+  const activeRef = useRef(false)
   const inputRef = useRef<HTMLInputElement>(null)
-  const regionId = 'qr-region'
-
-  useEffect(() => {
-    if (mode === 'input') {
-      stopCamera()
-      setTimeout(() => inputRef.current?.focus(), 100)
-    }
-  }, [mode])
-
-  useEffect(() => {
-    return () => { stopCamera() }
-  }, [])
 
   const stopCamera = () => {
-    if (scannerRef.current && scanning) {
-      scannerRef.current.stop().catch(() => {})
-      setScanning(false)
-    }
+    activeRef.current = false
+    cancelAnimationFrame(animRef.current)
+    streamRef.current?.getTracks().forEach(t => t.stop())
+    streamRef.current = null
+    if (videoRef.current) videoRef.current.srcObject = null
   }
 
   const startCamera = async () => {
+    if (activeRef.current) return
     setCameraError('')
+
+    // Έλεγξε αν υποστηρίζεται BarcodeDetector
+    if (!('BarcodeDetector' in window)) {
+      setCameraError('Ο browser δεν υποστηρίζει αυτόματο scanner. Χρησιμοποίησε χειροκίνητη εισαγωγή.')
+      setMode('input')
+      return
+    }
+
     try {
-      const scanner = new Html5Qrcode(regionId)
-      scannerRef.current = scanner
-      await scanner.start(
-        { facingMode: 'environment' },
-        { fps: 10, qrbox: { width: 260, height: 160 } },
-        (decodedText) => {
-          // Επιτυχές scan
-          navigator.vibrate?.(100)
-          stopCamera()
-          setMode('input')
-          onScan(decodedText)
-        },
-        () => {} // αγνοούμε τα intermediate errors
-      )
-      setScanning(true)
-    } catch (err) {
-      setCameraError('Δεν είναι δυνατή η πρόσβαση στην κάμερα. Δώσε άδεια ή χρησιμοποίησε χειροκίνητη εισαγωγή.')
+      // Ξεκίνα κάμερα με zoom x3 κατευθείαν
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: 'environment' },
+          advanced: [{ zoom: 3 } as MediaTrackConstraintSet],
+        }
+      })
+      streamRef.current = stream
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream
+        await videoRef.current.play()
+      }
+
+      activeRef.current = true
+
+      const detector = new BarcodeDetector({
+        formats: ['ean_13', 'ean_8', 'qr_code', 'code_128', 'code_39', 'itf', 'upc_a', 'upc_e']
+      })
+
+      const scan = async () => {
+        if (!activeRef.current || !videoRef.current) return
+        try {
+          const results = await detector.detect(videoRef.current)
+          if (results.length > 0) {
+            navigator.vibrate?.(100)
+            stopCamera()
+            onScan(results[0].rawValue)
+            setTimeout(() => startCamera(), 600)
+            return
+          }
+        } catch { /* frame not ready */ }
+        animRef.current = requestAnimationFrame(scan)
+      }
+      animRef.current = requestAnimationFrame(scan)
+
+    } catch {
+      setCameraError('Δεν επιτράπηκε πρόσβαση στην κάμερα. Χρησιμοποίησε χειροκίνητη εισαγωγή.')
       setMode('input')
     }
   }
 
-  const handleModeSwitch = () => {
-    if (mode === 'input') {
-      setMode('camera')
-      setTimeout(() => startCamera(), 200)
-    } else {
-      stopCamera()
-      setMode('input')
-    }
+  useEffect(() => {
+    startCamera()
+    return () => stopCamera()
+  }, [])
+
+  const switchToInput = () => {
+    stopCamera()
+    localStorage.setItem(STORAGE_KEY, 'input')
+    setMode('input')
+    setTimeout(() => inputRef.current?.focus(), 100)
+  }
+
+  const switchToCamera = () => {
+    localStorage.setItem(STORAGE_KEY, 'camera')
+    setMode('camera')
+    setTimeout(() => startCamera(), 100)
   }
 
   const handleManualSubmit = (e: React.FormEvent) => {
@@ -72,11 +109,28 @@ export default function BarcodeScanner({ onScan, placeholder = 'Σκανάρισ
     if (!inputVal.trim()) return
     onScan(inputVal.trim())
     setInputVal('')
+    // Επιστροφή focus για τον επόμενο handheld scan
+    setTimeout(() => inputRef.current?.focus(), 100)
   }
 
   return (
     <div className="barcode-scanner">
-      {mode === 'input' ? (
+      {mode === 'camera' ? (
+        <div className="camera-mode">
+          <video
+            ref={videoRef}
+            className="camera-video"
+            playsInline
+            muted
+          />
+          <div className="scan-overlay">
+            <div className="scan-line" />
+          </div>
+          <button type="button" className="btn-secondary btn-cancel-camera" onClick={switchToInput}>
+            ⌨️ Χειροκίνητη εισαγωγή
+          </button>
+        </div>
+      ) : (
         <form onSubmit={handleManualSubmit} className="scanner-input-row">
           <input
             ref={inputRef}
@@ -88,17 +142,10 @@ export default function BarcodeScanner({ onScan, placeholder = 'Σκανάρισ
             className="scan-input"
           />
           <button type="submit" className="btn-primary btn-scan-submit">OK</button>
-          <button type="button" className="btn-camera" onClick={handleModeSwitch} title="Χρήση κάμερας">
-            📷
+          <button type="button" className="btn-camera" onClick={switchToCamera}>
+            📷 Κάμερα
           </button>
         </form>
-      ) : (
-        <div className="camera-mode">
-          <div id={regionId} className="camera-region" />
-          <button type="button" className="btn-secondary btn-cancel-camera" onClick={handleModeSwitch}>
-            ✕ Κλείσιμο κάμερας
-          </button>
-        </div>
       )}
       {cameraError && <p className="camera-error">{cameraError}</p>}
     </div>

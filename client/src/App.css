@@ -135,13 +135,38 @@ body {
 
 .camera-mode { display: flex; flex-direction: column; gap: 12px; }
 
-.camera-region {
+.camera-video {
   width: 100%;
   border-radius: 10px;
-  overflow: hidden;
   background: #000;
-  min-height: 220px;
+  display: block;
+  max-height: 320px;
+  object-fit: cover;
 }
+
+.scan-overlay {
+  position: relative;
+  margin-top: -60px;
+  height: 60px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.scan-line {
+  width: 80%;
+  height: 2px;
+  background: rgba(0, 200, 100, 0.8);
+  box-shadow: 0 0 6px rgba(0, 200, 100, 0.6);
+  animation: scan-anim 1.5s ease-in-out infinite alternate;
+}
+
+@keyframes scan-anim {
+  from { transform: translateY(-24px); opacity: 0.6; }
+  to   { transform: translateY(24px);  opacity: 1; }
+}
+
 
 .btn-cancel-camera {
   width: 100%;
