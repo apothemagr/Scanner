@@ -23,6 +23,6 @@ app.use('/api/stock', stockRouter);
 app.use('/api/scan-in', scanInRouter);
 app.use('/api/scan-out', scanOutRouter);
 
-app.listen(PORT, () => {
-  console.log(`Scanner API running on port ${PORT}`);
+app.listen(Number(PORT), '0.0.0.0', () => {
+  console.log(`Scanner API running on http://0.0.0.0:${PORT}`);
 });
