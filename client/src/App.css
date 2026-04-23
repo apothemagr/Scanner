@@ -109,3 +109,50 @@ body {
 .picking-meta { font-size: 0.85rem; color: #666; }
 
 .empty { color: #888; text-align: center; padding: 32px; }
+
+/* BarcodeScanner */
+.barcode-scanner { width: 100%; }
+
+.scanner-input-row { display: flex; gap: 8px; align-items: center; }
+.scanner-input-row .scan-input { flex: 1; }
+
+.btn-camera {
+  font-size: 1.5rem;
+  background: #f0f2f5;
+  border: 2px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 10px 14px;
+  cursor: pointer;
+  line-height: 1;
+}
+.btn-camera:hover { background: #e0e0e0; }
+
+.btn-scan-submit {
+  flex: 0;
+  white-space: nowrap;
+  padding: 14px 18px;
+}
+
+.camera-mode { display: flex; flex-direction: column; gap: 12px; }
+
+.camera-region {
+  width: 100%;
+  border-radius: 10px;
+  overflow: hidden;
+  background: #000;
+  min-height: 220px;
+}
+
+.btn-cancel-camera {
+  width: 100%;
+  padding: 12px;
+  font-size: 1rem;
+}
+
+.camera-error {
+  color: #721c24;
+  background: #f8d7da;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 0.9rem;
+}

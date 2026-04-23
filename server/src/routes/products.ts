@@ -15,7 +15,7 @@ router.get('/lookup', async (req, res) => {
      FROM products p
      LEFT JOIN stock s ON s.product_id = p.id
      LEFT JOIN locations l ON l.id = s.location_id
-     WHERE p.barcode = $1 OR p.sku = $1
+     WHERE p.barcode = $1 OR p.barcode2 = $1 OR p.sku = $1
      GROUP BY p.id`,
     [code]
   );

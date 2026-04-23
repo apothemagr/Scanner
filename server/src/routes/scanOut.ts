@@ -87,7 +87,7 @@ router.post('/pickings/:id/scan', async (req, res) => {
 
   // Βρες το προϊόν
   const product = await query(
-    `SELECT * FROM products WHERE barcode = $1 OR sku = $1`,
+    `SELECT * FROM products WHERE barcode = $1 OR barcode2 = $1 OR sku = $1`,
     [barcode_or_sku]
   );
   if (product.rows.length === 0) {

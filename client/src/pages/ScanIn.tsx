@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState } from 'react'
+import BarcodeScanner from '../components/BarcodeScanner'
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:3001/api'
 
@@ -11,29 +12,21 @@ interface ScannedItem {
 
 export default function ScanIn() {
   const [items, setItems] = useState<ScannedItem[]>([])
-  const [scanInput, setScanInput] = useState('')
   const [locationInput, setLocationInput] = useState('')
   const [pendingProduct, setPendingProduct] = useState<{ id: number; sku: string; name: string } | null>(null)
   const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null)
-  const scanRef = useRef<HTMLInputElement>(null)
-
-  useEffect(() => { scanRef.current?.focus() }, [])
 
   const showMessage = (text: string, type: 'success' | 'error') => {
     setMessage({ text, type })
     setTimeout(() => setMessage(null), 3000)
   }
 
-  const handleScan = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!scanInput.trim()) return
-
+  const handleScan = async (code: string) => {
     try {
-      const res = await fetch(`${API}/products/lookup?code=${encodeURIComponent(scanInput)}`)
-      if (!res.ok) { showMessage('Προϊόν δεν βρέθηκε: ' + scanInput, 'error'); setScanInput(''); return }
+      const res = await fetch(`${API}/products/lookup?code=${encodeURIComponent(code)}`)
+      if (!res.ok) { showMessage('Προϊόν δεν βρέθηκε: ' + code, 'error'); return }
       const product = await res.json()
       setPendingProduct({ id: product.id, sku: product.sku, name: product.name })
-      setScanInput('')
     } catch {
       showMessage('Σφάλμα σύνδεσης με server', 'error')
     }
@@ -55,7 +48,6 @@ export default function ScanIn() {
     showMessage(`✓ ${pendingProduct.name} → ${locationInput}`, 'success')
     setPendingProduct(null)
     setLocationInput('')
-    setTimeout(() => scanRef.current?.focus(), 100)
   }
 
   return (
@@ -65,19 +57,10 @@ export default function ScanIn() {
       {message && <div className={`message ${message.type}`}>{message.text}</div>}
 
       {!pendingProduct ? (
-        <form onSubmit={handleScan} className="scan-form">
+        <div className="scan-form">
           <label>Scan Barcode / SKU</label>
-          <input
-            ref={scanRef}
-            type="text"
-            value={scanInput}
-            onChange={e => setScanInput(e.target.value)}
-            placeholder="Σκανάρισμα ή πληκτρολόγηση..."
-            autoComplete="off"
-            className="scan-input"
-          />
-          <button type="submit" className="btn-primary">Αναζήτηση</button>
-        </form>
+          <BarcodeScanner onScan={handleScan} placeholder="Σκανάρισμα ή πληκτρολόγηση..." />
+        </div>
       ) : (
         <form onSubmit={handleConfirm} className="scan-form">
           <div className="product-found">

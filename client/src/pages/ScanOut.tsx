@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useEffect } from 'react'
+import BarcodeScanner from '../components/BarcodeScanner'
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:3001/api'
 
@@ -24,12 +25,9 @@ interface Picking {
 export default function ScanOut() {
   const [pickings, setPickings] = useState<Picking[]>([])
   const [selected, setSelected] = useState<Picking | null>(null)
-  const [scanInput, setScanInput] = useState('')
   const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null)
-  const scanRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => { loadPickings() }, [])
-  useEffect(() => { if (selected) scanRef.current?.focus() }, [selected])
 
   const showMessage = (text: string, type: 'success' | 'error') => {
     setMessage({ text, type })
@@ -48,15 +46,13 @@ export default function ScanOut() {
     setSelected(await res.json())
   }
 
-  const handleScan = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!scanInput.trim() || !selected) return
-
+  const handleScan = async (code: string) => {
+    if (!selected) return
     try {
       const res = await fetch(`${API}/scan-out/pickings/${selected.id}/scan`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ barcode_or_sku: scanInput, quantity: 1 }),
+        body: JSON.stringify({ barcode_or_sku: code, quantity: 1 }),
       })
       const data = await res.json()
       if (!res.ok) {
@@ -74,7 +70,6 @@ export default function ScanOut() {
     } catch {
       showMessage('Σφάλμα σύνδεσης', 'error')
     }
-    setScanInput('')
   }
 
   if (selected) {
@@ -91,18 +86,9 @@ export default function ScanOut() {
 
         {message && <div className={`message ${message.type}`}>{message.text}</div>}
 
-        <form onSubmit={handleScan} className="scan-form">
-          <input
-            ref={scanRef}
-            type="text"
-            value={scanInput}
-            onChange={e => setScanInput(e.target.value)}
-            placeholder="Σκανάρισμα προϊόντος..."
-            autoComplete="off"
-            className="scan-input"
-          />
-          <button type="submit" className="btn-primary">Scan</button>
-        </form>
+        <div className="scan-form">
+          <BarcodeScanner onScan={handleScan} placeholder="Σκανάρισμα προϊόντος..." />
+        </div>
 
         {pending.length > 0 && (
           <div className="items-list">
