@@ -1,0 +1,111 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: #f0f2f5;
+  color: #1a1a2e;
+}
+
+.app { display: flex; flex-direction: column; min-height: 100vh; }
+
+.app-header {
+  background: #1a1a2e;
+  color: white;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+.app-header h1 { font-size: 1.2rem; white-space: nowrap; }
+.app-header nav { display: flex; gap: 8px; }
+.app-header nav a {
+  color: rgba(255,255,255,0.7);
+  text-decoration: none;
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  font-weight: 500;
+}
+.app-header nav a.active,
+.app-header nav a:hover { background: rgba(255,255,255,0.15); color: white; }
+
+.app-main { flex: 1; padding: 16px; max-width: 640px; margin: 0 auto; width: 100%; }
+
+.page { display: flex; flex-direction: column; gap: 16px; }
+.page h2 { font-size: 1.3rem; }
+
+.page-header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.page-header h2 { flex: 1; }
+.order-id { font-size: 0.85rem; color: #666; }
+
+.scan-form {
+  display: flex; flex-direction: column; gap: 10px;
+  background: white; padding: 16px; border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+.scan-form label { font-weight: 600; font-size: 0.9rem; color: #444; }
+
+.scan-input {
+  width: 100%; padding: 14px 16px; font-size: 1.1rem;
+  border: 2px solid #e0e0e0; border-radius: 8px; outline: none;
+}
+.scan-input:focus { border-color: #1a1a2e; }
+
+.btn-row { display: flex; gap: 8px; }
+.btn-primary, .btn-secondary, .btn-back {
+  padding: 14px 20px; font-size: 1rem; font-weight: 600;
+  border: none; border-radius: 8px; cursor: pointer;
+}
+.btn-primary { background: #1a1a2e; color: white; flex: 1; }
+.btn-secondary { background: #e0e0e0; color: #333; flex: 1; }
+.btn-back { background: transparent; color: #1a1a2e; padding: 8px 12px; font-size: 0.9rem; }
+
+.message { padding: 14px 16px; border-radius: 8px; font-weight: 600; font-size: 1rem; }
+.message.success { background: #d4edda; color: #155724; }
+.message.error { background: #f8d7da; color: #721c24; }
+
+.product-found {
+  background: #e8f4fd; border-radius: 8px; padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.product-found strong { font-size: 1.1rem; }
+
+.items-list { display: flex; flex-direction: column; gap: 8px; }
+.items-list h3 { font-size: 0.95rem; color: #555; margin-bottom: 4px; }
+.items-list.done { opacity: 0.6; }
+
+.item-row {
+  background: white; border-radius: 10px; padding: 12px 14px;
+  display: flex; align-items: center; justify-content: space-between;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06); gap: 8px;
+}
+.item-row.pending { border-left: 4px solid #ffc107; }
+.item-row.completed { border-left: 4px solid #28a745; }
+
+.item-info { display: flex; flex-direction: column; gap: 2px; flex: 1; }
+.item-name { font-weight: 600; font-size: 0.95rem; }
+.item-location { font-size: 0.8rem; color: #007bff; font-weight: 500; }
+.item-qty { font-weight: 700; font-size: 1rem; white-space: nowrap; }
+.sku { font-size: 0.78rem; color: #888; }
+
+.stock-row {
+  background: white; border-radius: 10px; padding: 12px 14px;
+  display: flex; align-items: center; justify-content: space-between;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+}
+.stock-qty { font-weight: 700; font-size: 1.1rem; }
+.stock-qty.zero { color: #dc3545; }
+
+.picking-card {
+  background: white; border: none; border-radius: 12px; padding: 16px;
+  text-align: left; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  display: flex; flex-direction: column; gap: 4px; width: 100%;
+}
+.picking-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.12); }
+.picking-customer { font-weight: 700; font-size: 1rem; }
+.picking-meta { font-size: 0.85rem; color: #666; }
+
+.empty { color: #888; text-align: center; padding: 32px; }

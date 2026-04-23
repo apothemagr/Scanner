@@ -1,0 +1,12 @@
+{
+  "name": "scanner-root",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "concurrently \"npm run dev --prefix server\" \"npm run dev --prefix client\"",
+    "install:all": "npm install --prefix server && npm install --prefix client",
+    "build": "npm run build --prefix client && npm run build --prefix server"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
