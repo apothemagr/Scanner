@@ -1,123 +1,84 @@
-# Scanner - Warehouse Management App
+# Scanner — Warehouse Management App
 
-## Project Overview
-Warehouse scanning app για διαχείριση αποθήκης. Αντικαθιστά χειροκίνητες διαδικασίες με barcode scanning.
+## Stack
+- **Frontend**: React + Vite + TypeScript — `client/` (port 5173)
+- **Backend**: Node.js + Express + TypeScript — `server/` (port 3001)
+- **Database**: **SQL Server** (mssql package) — ΟΧΙ PostgreSQL
+- **GitHub**: https://github.com/apothemagr/Scanner
 
-## Business Context
-- 1848 SKUs στη βάση δεδομένων
-- ERP: Entersoft Expert (integration προγραμματισμένο για Φάση 2)
-- Devices: Android phones + Zebra TC21 handheld scanners (PWA σε browser)
-- Courier voucher + παραστατικό εκτυπώνεται από Entersoft (δεν αλλάζει)
-
-## Core Workflows
-
-### Scan In (Παραλαβή από Προμηθευτή)
-1. Αποθηκάριος ανοίγει νέα παραλαβή
-2. Σκανάρει κάθε προϊόν (κάμερα ή handheld scanner)
-3. Επιλέγει/επιβεβαιώνει θέση αποθήκης
-4. Αν προϊόν δεν έχει barcode → εκτύπωση label (TODO)
-5. Entersoft ενημερώνεται αυτόματα (Φάση 2)
-
-### Scan Out (Picking Παραγγελιών)
-1. Λίστα παραγγελιών με φίλτρα: τύπος (Παραλαβή/Courier) + κατάσταση (Εκκρεμεί/Σε Picking/Ολοκληρωμένη)
-2. Κατάσταση υπολογίζεται δυναμικά από picked_qty vs required_qty (δεν αποθηκεύεται)
-3. Αποθηκάριος ανοίγει παραγγελία → σκανάρει προϊόν
-4. Popup επιβεβαίωσης: θέση + ποσότητα (ρυθμιζόμενη)
-5. Αν θέση γνωστή → αυτόματη αφαίρεση από stock χωρίς scan θέσης
-6. Αν θέση άγνωστη → scan θέσης για επιβεβαίωση
-7. **Un-pick**: σκανάρισμα ήδη-picked προϊόντος → popup επαναφοράς → επιστρέφει στο stock
-8. Auto-refresh κάθε 45 δευτερόλεπτα
-
-**Τύποι παραγγελιών:**
-- **Pickup**: παραλαβή από κατάστημα, έρχονται μία-μία κατά τη διάρκεια της ημέρας
-- **Courier**: batch αποστολές
-
-**Import παραγγελιών από Excel (Entersoft export):**
-```bash
-cd server
-npx tsx scripts/import-orders.ts "path/to/orders.xlsx"
+## Εκκίνηση (2 παράθυρα cmd)
 ```
-Columns: Order No, Name, Transporter, InvoiceDate, PrintDate, Code (SKU), Weight, QTY, Voucher QTY
+# Backend
+cd C:\Scanner_project\server
+npm run dev
 
-## Warehouse Location System
-- Ράφια: `R-{στήλη}{αριθμός}-{επίπεδο}` π.χ. `R-A1-02`
-- Παλέτες: `P-{αριθμός}` π.χ. `P-007` (μπορεί να έχουν μικτά είδη)
+# Frontend
+cd C:\Scanner_project\client
+npm run dev
+```
+Από κινητό: `http://{IP_PC}:5173` (βρες IP με `ipconfig`)
 
-## Tech Stack
-- **Frontend**: React PWA (Vite + TypeScript)
-- **Backend**: Node.js + Express + TypeScript
-- **Database**: PostgreSQL 17 (local: `scanner_db`, user: `postgres`, pass: `postgres`)
-- **Labels**: ZPL (Zebra printers) + PDF fallback (TODO)
-- **ERP Integration**: Entersoft Expert REST API (Φάση 2)
+## SQL Server connections (.env)
+- **Local dev**: `localhost\SQLEXPRESS`, port 1433, DB: `scanner_db`, user: `sa`, pass: `scan`
+- **Entersoft (παραγωγή)**: `192.168.199.33`, DB: `APOTHEMA`, user: `sa`, pass: `Ares4th!`
+- Δημιουργία πινάκων: `database/create-tables.sql`
+- TCP/IP ενεργοποιήθηκε μέσω registry (MSSQL17.SQLEXPRESS), port 1433 static
 
-## Project Structure
+## Κανόνες SQL (SQL Server syntax — πάντα)
+- `RETURNING *` → `OUTPUT INSERTED.*`
+- `ON CONFLICT` → `MERGE ... WHEN MATCHED / NOT MATCHED`
+- `NOW()` → `GETDATE()`
+- `LIMIT N` → `TOP N` (πριν τις στήλες)
+- `ILIKE` → `LIKE`
+- `json_agg(...)` → correlated subquery με `FOR JSON PATH`
+- `FILTER (WHERE x)` → `SUM(CASE WHEN x THEN 1 ELSE 0 END)`
+- `GROUP BY p.id` → πρέπει να αναφέρονται ΟΛΑ τα non-aggregated columns
+- Params: `$1,$2` → αυτόματα `@p1,@p2` μέσω wrapper στο `src/db.ts`
+- **Πάντα** `WITH (NOLOCK)` σε κάθε πίνακα σε SELECT
+
+## db.ts — helper functions
+- `query(sql, params)` — απλό query, $N → @pN αυτόματα
+- `withTransaction(async (t) => { ... })` — transaction
+- `parseJsonCol(value)` — parse FOR JSON PATH result
+- `closePool()` — για scripts
+
+## Entersoft sync (κάθε 30")
+- View: `CS_ACS_Pickup` στη βάση APOTHEMA
+- Columns: ADCode, ADRegistrationDate, WebOrderID, ProductID, ProductQTY, route, modifieddate, TransporterCode, TransporterName
+- Φίλτρο: μόνο σημερινές (ADRegistrationDate = GETDATE())
+- TransporterCode `0000001` → pickup, αλλιώς → courier
+- Mapping: ADCode→entersoft_so_id, WebOrderID→customer_name, modifieddate→print_date
+- Ώρα στη λίστα: `created_at` (UTC) — ώρα που μπήκε στο local σύστημα
+
+## Import scripts
+```
+# Προϊόντα
+cd server && npx tsx scripts/import-products.ts C:\path\to\Products.xlsx
+
+# Παραγγελίες από Excel
+cd server && npx tsx scripts/import-orders.ts C:\path\to\Orders.xlsx
+
+# Θέσεις αποθήκης (μία φορά)
+cd server && npx tsx scripts/setup-locations.ts
+```
+
+## Project structure
 ```
 Scanner_project/
-├── client/                        # React PWA (port 5173)
-│   └── src/
-│       ├── components/
-│       │   └── BarcodeScanner.tsx # Camera (BarcodeDetector API) + handheld input
-│       └── pages/
-│           ├── ScanIn.tsx         # Παραλαβή προϊόντων
-│           ├── ScanOut.tsx        # Picking παραγγελιών
-│           └── Stock.tsx          # Απόθεμα αποθήκης
-├── server/                        # Node.js API (port 3001)
-│   └── src/routes/
-│       ├── products.ts            # lookup barcode/barcode2/SKU
-│       ├── locations.ts           # θέσεις αποθήκης
-│       ├── stock.ts               # απόθεμα
-│       ├── scanIn.ts              # παραλαβές
-│       └── scanOut.ts             # picking
-│   └── scripts/
-│       └── import-products.ts     # one-time import από Excel
-├── database/migrations/
-│   ├── 001_initial_schema.sql     # βασικό schema
-│   ├── 002_add_barcode2.sql       # δεύτερο barcode για διπλά δέματα
-│   ├── 003_add_brand_supplier.sql # brand + supplier σε products
-│   ├── 004_...                    # stock filters
-│   ├── 005_picking_order_fields.sql # transporter, order_type, voucher_qty, invoice_date
-│   └── 006_picking_items_sku.sql  # nullable product_id, sku column
+├── client/src/
+│   ├── components/BarcodeScanner.tsx   # Camera + manual input
+│   └── pages/
+│       ├── ScanIn.tsx                  # Παραλαβή προϊόντων
+│       ├── ScanOut.tsx                 # Picking παραγγελιών
+│       └── Stock.tsx                   # Απόθεμα αποθήκης
+├── server/src/
+│   ├── db.ts                           # mssql connection pool + helpers
+│   ├── index.ts                        # Express app + sync intervals
+│   ├── routes/                         # products, locations, stock, scanIn, scanOut
+│   └── sync/sync-entersoft.ts          # Entersoft sync job
+├── database/create-tables.sql          # T-SQL schema (IF NOT EXISTS)
 └── CLAUDE.md
 ```
 
-## Database Schema (key tables)
-- `products`: sku, name, barcode, barcode2, brand, supplier, needs_label, unit
-- `locations`: code (R-A1-02 / P-007), type (shelf/pallet/floor)
-- `stock`: product_id, location_id, quantity
-- `receipts` + `receipt_items`: Scan In sessions
-- `pickings`: entersoft_so_id, customer_name, transporter, order_type (pickup/courier), voucher_qty, invoice_date, status
-- `picking_items`: picking_id, product_id (nullable), sku, location_id, required_qty, picked_qty
-- `stock_movements`: ιστορικό όλων των κινήσεων (type: in/out/unpick)
-
-## Barcode Logic
-- Προϊόντα με `EAN/EAN` format → αποθηκεύεται στο `barcode` και `barcode2`
-- Lookup ψάχνει: `barcode OR barcode2 OR sku`
-- 1660 προϊόντα με barcode, 134 χωρίς (needs_label=true), 54 με διπλό barcode
-- `barcode2` χωρίς UNIQUE constraint (ίδια εξωτερική μονάδα σε πολλά προϊόντα)
-
-## Scanner Component (BarcodeScanner.tsx)
-- **Camera mode**: Native BarcodeDetector API + getUserMedia με zoom x3
-- **Input mode**: Text input για handheld scanners (keyboard wedge)
-- **Persistent**: localStorage αποθηκεύει την προτίμηση ανά συσκευή
-- StrictMode αφαιρέθηκε (προκαλούσε double camera init)
-
-## Running Locally
-```bash
-cd C:\Scanner_project
-npm run dev        # ξεκινά server (3001) + client (5173) μαζί
-```
-Από κινητό στο ίδιο δίκτυο: http://192.168.1.54:5174
-
-## Import Products από Excel
-```bash
-cd server
-npx tsx scripts/import-products.ts "path/to/Products.xlsx"
-```
-Columns: Code, EAN (υποστηρίζει EAN/EAN), Brand, Model, Stock HQ
-
-## TODO (Φάση 2)
-- [ ] Entersoft Expert API integration (sync orders & stock)
-- [ ] Εκτύπωση labels για προϊόντα χωρίς barcode (134 προϊόντα)
-- [ ] Admin panel: διαχείριση θέσεων αποθήκης
-- [ ] Reports / ιστορικό κινήσεων
-- [ ] Deploy σε production server
+## Επόμενο βήμα
+Ροή παραλαβών (ScanIn): scan document barcode → δημιουργία receipt → scan προϊόντων → finalize → push stock στο ecom (webProduct.StockQty) → τοποθέτηση σε ράφι
