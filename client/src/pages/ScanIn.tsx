@@ -3,12 +3,27 @@ import BarcodeScanner from '../components/BarcodeScanner'
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:3001/api'
 
+type ReceiptStatus = 'open' | 'closed' | 'completed'
+type StatusFilter = 'all' | ReceiptStatus
+
+const STATUS_LABEL: Record<ReceiptStatus, string> = {
+  open: 'Καταχώρηση',
+  closed: 'Εναπόθεση',
+  completed: 'Ολοκληρωμένη',
+}
+const STATUS_COLOR: Record<ReceiptStatus, string> = {
+  open: '#e67e00',
+  closed: '#1a6fa8',
+  completed: '#28a745',
+}
+
 interface Receipt {
   id: number
   entersoft_po_id: string | null
   supplier_name: string | null
-  status: 'open' | 'closed' | 'completed'
+  status: ReceiptStatus
   created_at: string
+  completed_at: string | null
   item_count: number
   placed_count: number
 }
@@ -56,8 +71,9 @@ export default function ScanIn() {
   const [loading, setLoading] = useState(true)
   const [showNewForm, setShowNewForm] = useState(false)
   const [newDoc, setNewDoc] = useState('')
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
 
-  useEffect(() => { loadReceipts() }, [])
+  useEffect(() => { loadReceipts(statusFilter) }, [statusFilter])
 
   useEffect(() => {
     const onPopState = () => {
@@ -77,10 +93,13 @@ export default function ScanIn() {
     setTimeout(() => setMessage(null), 3500)
   }
 
-  const loadReceipts = async () => {
+  const loadReceipts = async (sf?: StatusFilter) => {
     setLoading(true)
-    try { setReceipts(await (await fetch(`${API}/scan-in/receipts`)).json()) }
-    catch { /* skip */ }
+    const s = sf ?? statusFilter
+    try {
+      const params = s !== 'all' ? `?status=${s}` : ''
+      setReceipts(await (await fetch(`${API}/scan-in/receipts${params}`)).json())
+    } catch { /* skip */ }
     setLoading(false)
   }
 
@@ -173,6 +192,7 @@ export default function ScanIn() {
   }
 
   const isPlacementPhase = selected?.status === 'closed'
+  const isReadOnly = selected?.status === 'completed'
   const pending = selected?.items.filter(i => !i.location_id) ?? []
   const placed = selected?.items.filter(i => i.location_id) ?? []
 
@@ -210,23 +230,28 @@ export default function ScanIn() {
         <div className="page-header">
           <button className="btn-back" onClick={() => { setSelected(null); setStep('list') }}>← Πίσω</button>
           <div style={{ flex: 1 }}>
-            <h2 style={{ fontSize: '1rem' }}>{selected.entersoft_po_id || 'Νέα Παραλαβή'}</h2>
-            <span className="order-id">
-              {isPlacementPhase ? '📦 Εναπόθεση' : '📋 Καταχώρηση'}
+            <h2 style={{ fontSize: '1rem' }}>{selected.entersoft_po_id || 'Χωρίς παραστατικό'}</h2>
+            <span className="order-id" style={{ color: STATUS_COLOR[selected.status] }}>
+              {STATUS_LABEL[selected.status]}
             </span>
           </div>
-          {!isPlacementPhase && selected.items.length > 0 && (
+          <span className="order-status-badge" style={{ background: STATUS_COLOR[selected.status] }}>
+            {Math.round(Number(selected.item_count))} είδη
+          </span>
+          {!isPlacementPhase && !isReadOnly && selected.items.length > 0 && (
             <button className="btn-primary" style={{ padding: '10px 14px', fontSize: '0.88rem' }} onClick={closeReceipt}>
               ✓ Κλείσιμο
             </button>
           )}
         </div>
 
-        <BarcodeScanner
-          onScan={isPlacementPhase ? handlePlaceProductScan : handleProductScan}
-          placeholder={isPlacementPhase ? 'Scan προϊόν για εναπόθεση...' : 'Scan προϊόν παραλαβής...'}
-          paused={!!popup}
-        />
+        {!isReadOnly && (
+          <BarcodeScanner
+            onScan={isPlacementPhase ? handlePlaceProductScan : handleProductScan}
+            placeholder={isPlacementPhase ? 'Scan προϊόν για εναπόθεση...' : 'Scan προϊόν παραλαβής...'}
+            paused={!!popup}
+          />
+        )}
 
         {pending.length > 0 && (
           <>
@@ -319,6 +344,15 @@ export default function ScanIn() {
         </button>
       </div>
 
+      <div className="status-filters">
+        {(['all', 'open', 'closed', 'completed'] as StatusFilter[]).map(s => (
+          <button key={s} className={`status-filter-btn${statusFilter === s ? ' active' : ''}`}
+            onClick={() => setStatusFilter(s)}>
+            {s === 'all' ? 'Όλες' : STATUS_LABEL[s as ReceiptStatus]}
+          </button>
+        ))}
+      </div>
+
       {showNewForm && (
         <div style={{ display: 'flex', gap: 8 }}>
           <input
@@ -339,11 +373,11 @@ export default function ScanIn() {
         <div className="scard-list">
           {receipts.map(r => (
             <div key={r.id} className="scard" onClick={() => openReceipt(r.id)}
-              style={{ borderLeft: r.status === 'closed' ? '3px solid #1a6fa8' : '3px solid #ffc107' }}>
-              <div className="scard-name" style={{ display: 'flex', justifyContent: 'space-between' }}>
+              style={{ borderLeft: `3px solid ${STATUS_COLOR[r.status]}` }}>
+              <div className="scard-name" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span>{r.entersoft_po_id || <span style={{ color: '#aaa' }}>Χωρίς παραστατικό</span>}</span>
-                <span style={{ fontSize: '0.75rem', fontWeight: 700, color: r.status === 'closed' ? '#1a6fa8' : '#e67e00' }}>
-                  {r.status === 'closed' ? '📦 Εναπόθεση' : '📋 Καταχώρηση'}
+                <span className="order-status-badge" style={{ background: STATUS_COLOR[r.status] }}>
+                  {STATUS_LABEL[r.status]}
                 </span>
               </div>
               <div className="scard-bottom">

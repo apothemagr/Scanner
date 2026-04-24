@@ -3,17 +3,19 @@ import { query, withTransaction } from '../db'
 
 const router = Router()
 
-// Λίστα ανοιχτών + κλειστών (μη ολοκληρωμένων) παραλαβών
-router.get('/receipts', async (_req, res) => {
+// Λίστα παραλαβών με προαιρετικό φίλτρο κατάστασης
+router.get('/receipts', async (req, res) => {
+  const status = req.query.status as string | undefined
   const result = await query(
-    `SELECT r.id, r.entersoft_po_id, r.supplier_name, r.status, r.created_at,
+    `SELECT r.id, r.entersoft_po_id, r.supplier_name, r.status, r.created_at, r.completed_at,
         COUNT(ri.id) AS item_count,
         SUM(CASE WHEN ri.location_id IS NOT NULL THEN 1 ELSE 0 END) AS placed_count
      FROM receipts r WITH (NOLOCK)
      LEFT JOIN receipt_items ri WITH (NOLOCK) ON ri.receipt_id = r.id
-     WHERE r.status IN ('open', 'closed')
-     GROUP BY r.id, r.entersoft_po_id, r.supplier_name, r.status, r.created_at
-     ORDER BY r.created_at DESC`
+     WHERE ($1 IS NULL OR r.status = $1)
+     GROUP BY r.id, r.entersoft_po_id, r.supplier_name, r.status, r.created_at, r.completed_at
+     ORDER BY r.created_at DESC`,
+    [status || null]
   )
   return res.json(result.rows)
 })
