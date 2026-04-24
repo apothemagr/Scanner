@@ -11,9 +11,19 @@ interface PickingOrder {
   transporter: string
   voucher_qty: number
   invoice_date: string
+  print_date: string | null
+  created_at: string
   status: string
   item_count: number
   picked_count: number
+}
+
+function formatTime(dateStr: string | null): string {
+  if (!dateStr) return ''
+  const d = new Date(dateStr)
+  const h = String(d.getUTCHours()).padStart(2, '0')
+  const m = String(d.getUTCMinutes()).padStart(2, '0')
+  return `${h}:${m}`
 }
 
 interface PickingItem {
@@ -457,6 +467,7 @@ export default function ScanOut() {
                 <span className="scard-meta">
                   {o.entersoft_so_id}
                   {o.voucher_qty > 1 && <> · <span className="scard-locs">{o.voucher_qty} δέμ.</span></>}
+                  {' · '}<span className="scard-locs">{formatTime(o.created_at)}</span>
                 </span>
                 <span className="scard-qty">{Math.round(Number(o.picked_count))}/{Math.round(Number(o.item_count))} είδη</span>
               </div>

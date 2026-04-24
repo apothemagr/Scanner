@@ -76,9 +76,9 @@ export async function syncEntersoft() {
           const ins = await query(
             `INSERT INTO pickings
               (entersoft_so_id, customer_name, transporter, order_type,
-               voucher_qty, invoice_date, status)
+               voucher_qty, invoice_date, print_date, status)
              OUTPUT INSERTED.id
-             VALUES ($1, $2, $3, $4, $5, $6, 'open')`,
+             VALUES ($1, $2, $3, $4, $5, $6, $7, 'open')`,
             [
               adCode,
               String(first.WebOrderID || '').trim(),
@@ -86,6 +86,7 @@ export async function syncEntersoft() {
               String(first.TransporterCode).trim() === '0000001' ? 'pickup' : 'courier',
               1,
               first.ADRegistrationDate,
+              first.modifieddate || null,
             ]
           )
           pickingId = ins.rows[0].id as number
