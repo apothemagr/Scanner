@@ -8,8 +8,10 @@ const config: sql.config = {
   database: process.env.DB_NAME || 'scanner_db',
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
-  port: Number(process.env.DB_PORT) || 1433,
+  // Για named instance (π.χ. SQLEXPRESS) ΔΕΝ βάζουμε port — το βρίσκει μόνο του μέσω SQL Browser
+  ...(process.env.DB_INSTANCE ? {} : { port: Number(process.env.DB_PORT) || 1433 }),
   options: {
+    instanceName: process.env.DB_INSTANCE || undefined,
     encrypt: process.env.DB_ENCRYPT === 'true',
     trustServerCertificate: true,
     enableArithAbort: true,
