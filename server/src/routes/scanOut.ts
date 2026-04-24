@@ -21,8 +21,8 @@ router.get('/pickings', async (req, res) => {
             THEN 'in_progress'
           ELSE 'open'
         END AS status
-     FROM pickings p
-     LEFT JOIN picking_items pi ON pi.picking_id = p.id
+     FROM pickings p WITH (NOLOCK)
+     LEFT JOIN picking_items pi WITH (NOLOCK) ON pi.picking_id = p.id
      WHERE ($1 IS NULL OR p.order_type = $1)
      GROUP BY p.id, p.entersoft_so_id, p.customer_name, p.transporter,
               p.order_type, p.voucher_qty, p.invoice_date, p.print_date,
@@ -42,7 +42,9 @@ router.get('/pickings', async (req, res) => {
 
 // Λεπτομέρειες picking
 router.get('/pickings/:id', async (req, res) => {
-  const picking = await query(`SELECT * FROM pickings WHERE id = $1`, [req.params.id])
+  const picking = await query(
+    `SELECT * FROM pickings WITH (NOLOCK) WHERE id = $1`, [req.params.id]
+  )
   if (picking.rows.length === 0) return res.status(404).json({ error: 'Δεν βρέθηκε' })
 
   const items = await query(
@@ -51,9 +53,9 @@ router.get('/pickings/:id', async (req, res) => {
         COALESCE(p.sku, pi.sku) AS sku,
         p.name, p.barcode, p.barcode2, p.unit,
         l.code AS location_code
-     FROM picking_items pi
-     LEFT JOIN products p ON p.id = pi.product_id
-     LEFT JOIN locations l ON l.id = pi.location_id
+     FROM picking_items pi WITH (NOLOCK)
+     LEFT JOIN products p WITH (NOLOCK) ON p.id = pi.product_id
+     LEFT JOIN locations l WITH (NOLOCK) ON l.id = pi.location_id
      WHERE pi.picking_id = $1
      ORDER BY CASE WHEN l.code IS NULL THEN 1 ELSE 0 END, l.code, p.name`,
     [req.params.id]
@@ -67,7 +69,7 @@ router.post('/pickings/:id/scan-product', async (req, res) => {
   const { barcode_or_sku } = req.body
 
   const product = await query(
-    `SELECT * FROM products WHERE barcode = $1 OR barcode2 = $1 OR sku = $1`,
+    `SELECT * FROM products WITH (NOLOCK) WHERE barcode = $1 OR barcode2 = $1 OR sku = $1`,
     [barcode_or_sku]
   )
   if (product.rows.length === 0) {
@@ -77,8 +79,8 @@ router.post('/pickings/:id/scan-product', async (req, res) => {
 
   const pickItem = await query(
     `SELECT pi.*, l.code AS location_code
-     FROM picking_items pi
-     LEFT JOIN locations l ON l.id = pi.location_id
+     FROM picking_items pi WITH (NOLOCK)
+     LEFT JOIN locations l WITH (NOLOCK) ON l.id = pi.location_id
      WHERE pi.picking_id = $1 AND pi.product_id = $2`,
     [req.params.id, prod.id]
   )
@@ -103,7 +105,8 @@ router.post('/pickings/:id/scan-product', async (req, res) => {
   const qty = Number(item.required_qty) - Number(item.picked_qty)
   const stockLocs = await query(
     `SELECT s.location_id, l.code AS location_code
-     FROM stock s JOIN locations l ON l.id = s.location_id
+     FROM stock s WITH (NOLOCK)
+     JOIN locations l WITH (NOLOCK) ON l.id = s.location_id
      WHERE s.product_id = $1 AND s.quantity > 0`,
     [prod.id]
   )
@@ -124,19 +127,21 @@ router.post('/pickings/:id/scan-product', async (req, res) => {
   })
 })
 
-// Scan θέσης — επιβεβαίωση και αφαίρεση από stock
+// Scan θέσης
 router.post('/pickings/:id/scan-location', async (req, res) => {
   const { location_code, product_id, quantity } = req.body
 
-  const locRes = await query(`SELECT * FROM locations WHERE code = $1`, [location_code.toUpperCase()])
+  const locRes = await query(
+    `SELECT * FROM locations WITH (NOLOCK) WHERE code = $1`, [location_code.toUpperCase()]
+  )
   if (locRes.rows.length === 0) {
     return res.status(404).json({ error: 'Θέση δεν βρέθηκε: ' + location_code })
   }
   const loc = locRes.rows[0]
 
   const pickItem = await query(
-    `SELECT pi.*, p.name FROM picking_items pi
-     JOIN products p ON p.id = pi.product_id
+    `SELECT pi.*, p.name FROM picking_items pi WITH (NOLOCK)
+     JOIN products p WITH (NOLOCK) ON p.id = pi.product_id
      WHERE pi.picking_id = $1 AND pi.product_id = $2`,
     [req.params.id, product_id]
   )
@@ -168,7 +173,7 @@ router.post('/pickings/:id/scan-location', async (req, res) => {
       [product_id, loc.id, qty, req.params.id]
     )
     const remaining = await t.query(
-      `SELECT COUNT(*) AS cnt FROM picking_items
+      `SELECT COUNT(*) AS cnt FROM picking_items WITH (NOLOCK)
        WHERE picking_id = $1 AND picked_qty < required_qty`,
       [req.params.id]
     )
@@ -191,19 +196,21 @@ router.post('/pickings/:id/scan-location', async (req, res) => {
   })
 })
 
-// Επαναφορά είδους (un-pick)
+// Un-pick
 router.post('/pickings/:id/unpick', async (req, res) => {
   const { product_id, location_code, quantity } = req.body
 
-  const locRes = await query(`SELECT * FROM locations WHERE code = $1`, [location_code.toUpperCase()])
+  const locRes = await query(
+    `SELECT * FROM locations WITH (NOLOCK) WHERE code = $1`, [location_code.toUpperCase()]
+  )
   if (locRes.rows.length === 0) {
     return res.status(404).json({ error: 'Θέση δεν βρέθηκε: ' + location_code })
   }
   const loc = locRes.rows[0]
 
   const pickItem = await query(
-    `SELECT pi.*, p.name FROM picking_items pi
-     JOIN products p ON p.id = pi.product_id
+    `SELECT pi.*, p.name FROM picking_items pi WITH (NOLOCK)
+     JOIN products p WITH (NOLOCK) ON p.id = pi.product_id
      WHERE pi.picking_id = $1 AND pi.product_id = $2`,
     [req.params.id, product_id]
   )
@@ -220,7 +227,6 @@ router.post('/pickings/:id/unpick', async (req, res) => {
        WHERE picking_id = $3 AND product_id = $4`,
       [qty, loc.id, req.params.id, product_id]
     )
-    // Επαναφορά stock με MERGE
     await t.query(
       `MERGE stock AS tgt
        USING (SELECT $1 AS product_id, $2 AS location_id, $3 AS qty) AS src

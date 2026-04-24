@@ -38,7 +38,6 @@ router.post('/receipts/:id/scan', async (req, res) => {
        WHERE receipt_id = $3 AND product_id = $4`,
       [quantity, location_id, req.params.id, product_id]
     )
-    // Upsert stock
     await t.query(
       `MERGE stock AS tgt
        USING (SELECT $1 AS product_id, $2 AS location_id, $3 AS qty) AS src
@@ -68,7 +67,7 @@ router.post('/receipts/:id/complete', async (req, res) => {
   return res.json({ success: true })
 })
 
-// Γρήγορη παραλαβή (χωρίς session)
+// Γρήγορη παραλαβή
 router.post('/receipts/quick', async (req, res) => {
   const { product_id, location_id, quantity } = req.body
   if (!product_id || !location_id || !quantity) {
@@ -102,8 +101,8 @@ router.get('/receipts', async (_req, res) => {
         r.status, r.created_at, r.completed_at,
         COUNT(ri.id) AS item_count,
         SUM(CASE WHEN ri.scanned_at IS NOT NULL THEN 1 ELSE 0 END) AS scanned_count
-     FROM receipts r
-     LEFT JOIN receipt_items ri ON ri.receipt_id = r.id
+     FROM receipts r WITH (NOLOCK)
+     LEFT JOIN receipt_items ri WITH (NOLOCK) ON ri.receipt_id = r.id
      WHERE r.status = 'open'
      GROUP BY r.id, r.entersoft_po_id, r.supplier_name, r.created_by,
               r.status, r.created_at, r.completed_at

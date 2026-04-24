@@ -13,11 +13,11 @@ router.get('/lookup', async (req, res) => {
         p.needs_label, p.brand, p.supplier, p.site_url,
         (SELECT l.code AS location_code, l.id AS location_id,
                 CAST(s2.quantity AS INT) AS quantity
-         FROM stock s2
-         JOIN locations l ON l.id = s2.location_id
+         FROM stock s2 WITH (NOLOCK)
+         JOIN locations l WITH (NOLOCK) ON l.id = s2.location_id
          WHERE s2.product_id = p.id AND s2.quantity > 0
          FOR JSON PATH) AS stock_locations
-     FROM products p
+     FROM products p WITH (NOLOCK)
      WHERE p.barcode = $1 OR p.barcode2 = $1 OR p.sku = $1`,
     [code]
   )
@@ -32,7 +32,7 @@ router.get('/search', async (req, res) => {
   const { q } = req.query
   if (!q || String(q).trim().length < 2) return res.json([])
   const result = await query(
-    `SELECT TOP 10 id, sku, name FROM products WHERE name LIKE $1 ORDER BY name`,
+    `SELECT TOP 10 id, sku, name FROM products WITH (NOLOCK) WHERE name LIKE $1 ORDER BY name`,
     [`%${String(q).trim()}%`]
   )
   return res.json(result.rows)
@@ -40,7 +40,7 @@ router.get('/search', async (req, res) => {
 
 // Λίστα όλων
 router.get('/', async (_req, res) => {
-  const result = await query(`SELECT * FROM products ORDER BY name`)
+  const result = await query(`SELECT * FROM products WITH (NOLOCK) ORDER BY name`)
   return res.json(result.rows)
 })
 

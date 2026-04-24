@@ -43,7 +43,7 @@ export async function syncEntersoft() {
     const result = await esPool.request().query<PickupRow>(
       `SELECT ADCode, ADRegistrationDate, WebOrderID, ProductID, ProductQTY,
               route, modifieddate, TransporterCode, TransporterName
-       FROM CS_ACS_Pickup
+       FROM CS_ACS_Pickup WITH (NOLOCK)
        WHERE CAST(ADRegistrationDate AS DATE) = CAST(GETDATE() AS DATE)`
     )
     const rows: PickupRow[] = Array.from(result.recordset)
@@ -66,7 +66,7 @@ export async function syncEntersoft() {
       try {
         // Έλεγχος αν υπάρχει ήδη η παραγγελία
         const existing = await query(
-          `SELECT id FROM pickings WHERE entersoft_so_id = $1`, [adCode]
+          `SELECT id FROM pickings WITH (NOLOCK) WHERE entersoft_so_id = $1`, [adCode]
         )
 
         let pickingId: number
@@ -83,7 +83,7 @@ export async function syncEntersoft() {
               adCode,
               String(first.WebOrderID || '').trim(),
               String(first.TransporterName || '').trim(),
-              'courier',
+              String(first.TransporterCode).trim() === '0000001' ? 'pickup' : 'courier',
               1,
               first.ADRegistrationDate,
             ]
@@ -101,7 +101,7 @@ export async function syncEntersoft() {
 
           // Βρες product_id αν υπάρχει στη local βάση
           const prodRes = await query(
-            `SELECT id FROM products WHERE sku = $1`, [sku]
+            `SELECT id FROM products WITH (NOLOCK) WHERE sku = $1`, [sku]
           )
           const productId = prodRes.rows[0]?.id || null
 
@@ -109,7 +109,7 @@ export async function syncEntersoft() {
           let locationId: number | null = null
           if (productId) {
             const locRes = await query(
-              `SELECT TOP 1 location_id FROM stock
+              `SELECT TOP 1 location_id FROM stock WITH (NOLOCK)
                WHERE product_id = $1 AND quantity >= $2
                ORDER BY quantity DESC`,
               [productId, Number(line.ProductQTY) || 1]
@@ -120,7 +120,7 @@ export async function syncEntersoft() {
           // Insert μόνο αν δεν υπάρχει ήδη αυτή η γραμμή
           await query(
             `IF NOT EXISTS (
-               SELECT 1 FROM picking_items
+               SELECT 1 FROM picking_items WITH (NOLOCK)
                WHERE picking_id = $1 AND sku = $2
              )
              INSERT INTO picking_items
