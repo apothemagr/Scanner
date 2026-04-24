@@ -72,6 +72,7 @@ export default function ScanIn() {
   const [showNewForm, setShowNewForm] = useState(false)
   const [newDoc, setNewDoc] = useState('')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+  const [showScanner, setShowScanner] = useState(false)
 
   useEffect(() => { loadReceipts(statusFilter) }, [statusFilter])
 
@@ -246,11 +247,30 @@ export default function ScanIn() {
         </div>
 
         {!isReadOnly && (
-          <BarcodeScanner
-            onScan={isPlacementPhase ? handlePlaceProductScan : handleProductScan}
-            placeholder={isPlacementPhase ? 'Scan προϊόν για εναπόθεση...' : 'Scan προϊόν παραλαβής...'}
-            paused={!!popup}
-          />
+          <button className="btn-place" onClick={() => setShowScanner(true)}>
+            📷 {isPlacementPhase ? 'Σκανάρισε για Εναπόθεση' : 'Σκανάρισε Προϊόν'}
+          </button>
+        )}
+
+        {/* Scanner popup */}
+        {showScanner && (
+          <>
+            <div className="popup-overlay" onClick={() => setShowScanner(false)} />
+            <div className="popup" style={{ gap: 12 }}>
+              <button className="popup-close" onClick={() => setShowScanner(false)}>✕</button>
+              <div className="popup-name" style={{ fontSize: '0.95rem' }}>
+                {isPlacementPhase ? 'Σκανάρισμα για Εναπόθεση' : 'Σκανάρισμα Προϊόντος'}
+              </div>
+              <BarcodeScanner
+                onScan={code => {
+                  setShowScanner(false)
+                  isPlacementPhase ? handlePlaceProductScan(code) : handleProductScan(code)
+                }}
+                placeholder="Barcode προϊόντος..."
+                autoStart
+              />
+            </div>
+          </>
         )}
 
         {pending.length > 0 && (
@@ -277,14 +297,20 @@ export default function ScanIn() {
 
         {placed.length > 0 && (
           <>
-            <span style={{ fontSize: '0.8rem', color: '#666', paddingLeft: 2 }}>Τοποθετήθηκαν ({placed.length})</span>
-            <div className="scard-list" style={{ opacity: 0.55 }}>
+            {!isReadOnly && <span style={{ fontSize: '0.8rem', color: '#666', paddingLeft: 2 }}>Τοποθετήθηκαν ({placed.length})</span>}
+            <div className="scard-list" style={isReadOnly ? {} : { opacity: 0.55 }}>
               {placed.map(item => (
                 <div key={item.product_id} className="scard">
                   <div className="scard-name">{item.name}</div>
                   <div className="scard-bottom">
-                    <span className="scard-meta">{item.sku} · <span className="scard-locs">{item.location_code}</span></span>
-                    <span className="scard-qty" style={{ color: '#28a745' }}>✓ x{Math.round(Number(item.received_qty))}</span>
+                    <span className="scard-meta">
+                      {item.sku}
+                      {item.location_code && <> · <span className="scard-locs">{item.location_code}</span></>}
+                      {item.placement_added && <span style={{ color: '#e67e00' }}> · Νέο</span>}
+                    </span>
+                    <span className="scard-qty" style={{ color: isReadOnly ? '#111' : '#28a745' }}>
+                      {isReadOnly ? '' : '✓ '}x{Math.round(Number(item.received_qty))}
+                    </span>
                   </div>
                 </div>
               ))}
