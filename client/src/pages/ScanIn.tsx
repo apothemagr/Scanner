@@ -125,7 +125,7 @@ export default function ScanIn() {
             ))}
           </div>
 
-          <BarcodeScanner onScan={handleLocationScan} placeholder="Σκανάρισμα θέσης..." autoStart />
+          <BarcodeScanner onScan={handleLocationScan} placeholder="Σκανάρισμα θέσης..." autoStart type="location" />
         </>
       )}
 

@@ -7,6 +7,7 @@ interface Props {
   placeholder?: string
   paused?: boolean
   autoStart?: boolean
+  type?: 'product' | 'location'
 }
 
 
@@ -17,13 +18,14 @@ declare const BarcodeDetector: {
 
 const STORAGE_KEY = 'scanner_mode'
 
-export default function BarcodeScanner({ onScan, placeholder = 'Σκανάρισμα...', paused = false, autoStart = false }: Props) {
+export default function BarcodeScanner({ onScan, placeholder = 'Σκανάρισμα...', paused = false, autoStart = false, type = 'product' }: Props) {
   const [mode, setMode] = useState<'input' | 'camera'>(
     () => (localStorage.getItem(STORAGE_KEY) as 'input' | 'camera') ?? 'camera'
   )
   const [inputVal, setInputVal] = useState('')
   const [nameVal, setNameVal] = useState('')
   const [suggestions, setSuggestions] = useState<{ id: number; sku: string; name: string }[]>([])
+  const [locations, setLocations] = useState<{ id: number; code: string }[]>([])
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [cameraError, setCameraError] = useState('')
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -120,6 +122,15 @@ export default function BarcodeScanner({ onScan, placeholder = 'Σκανάρισ
     if (paused) stopScanLoop()
   }, [paused])
 
+  useEffect(() => {
+    if (type === 'location') {
+      fetch(`${API}/locations`)
+        .then(r => r.ok ? r.json() : [])
+        .then((data: { id: number; code: string }[]) => setLocations(data))
+        .catch(() => {})
+    }
+  }, [type])
+
   const switchToInput = () => {
     stopCamera()
     localStorage.setItem(STORAGE_KEY, 'input')
@@ -177,6 +188,43 @@ export default function BarcodeScanner({ onScan, placeholder = 'Σκανάρισ
             ⌨️ Χειροκίνητη εισαγωγή
           </button>
         </div>
+      ) : type === 'location' ? (
+        <form onSubmit={handleManualSubmit} className="manual-mode">
+          <button type="button" className="btn-cancel-camera" onClick={switchToCamera}>
+            📷 Κάμερα
+          </button>
+          <div className="name-search-wrap">
+            <input
+              ref={inputRef}
+              type="text"
+              value={inputVal}
+              onChange={e => setInputVal(e.target.value.toUpperCase())}
+              placeholder={placeholder || 'Θέση (π.χ. R-A1-02)...'}
+              autoComplete="off"
+              autoCapitalize="characters"
+              className="scan-input"
+            />
+            {inputVal.trim().length >= 1 && (() => {
+              const matches = locations
+                .filter(l => l.code.includes(inputVal.trim().toUpperCase()))
+                .slice(0, 8)
+              return matches.length > 0 ? (
+                <div className="suggestions">
+                  {matches.map(l => (
+                    <div
+                      key={l.id}
+                      className="suggestion-row"
+                      onClick={() => { onScan(l.code); setInputVal('') }}
+                    >
+                      <span className="suggestion-name">{l.code}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : null
+            })()}
+          </div>
+          <button type="submit" className="btn-primary" style={{ width: '100%' }}>OK</button>
+        </form>
       ) : (
         <form onSubmit={handleManualSubmit} className="manual-mode">
           <button type="button" className="btn-cancel-camera" onClick={switchToCamera}>

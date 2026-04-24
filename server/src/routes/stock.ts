@@ -6,7 +6,7 @@ const router = Router();
 // Συνολικό απόθεμα ανά προϊόν
 router.get('/', async (_req, res) => {
   const result = await query(
-    `SELECT p.id, p.sku, p.name, p.unit, p.site_url,
+    `SELECT p.id, p.sku, p.name, p.unit, p.site_url, p.brand, p.supplier,
       COALESCE(SUM(s.quantity), 0)::int as total_quantity,
       json_agg(json_build_object('location', l.code, 'qty', s.quantity::int))
         FILTER (WHERE s.quantity > 0) as locations

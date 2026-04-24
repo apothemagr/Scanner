@@ -34,7 +34,8 @@ async function importProducts() {
   for (const row of rows) {
     const sku = String(row.Code || '').trim()
     const name = String(row.Model || '').trim()
-    const brand = String(row.Brand || '').trim()
+    const brand = String(row.Brand || '').trim() || null
+    const supplier = String(row.Supplier || '').trim() || null
     const eanRaw = row.EAN ? String(row.EAN).trim() : null
     const eanParts = eanRaw?.includes('/') ? eanRaw.split('/') : [eanRaw]
     const ean  = eanParts[0] && eanParts[0].length >= 8 ? eanParts[0] : null
@@ -43,25 +44,23 @@ async function importProducts() {
 
     if (!sku || !name) { errors++; continue }
 
-    // Συνδυάζουμε Brand + Model για πλήρες όνομα
-    const fullName = brand && !name.toLowerCase().includes(brand.toLowerCase())
-      ? `${brand} ${name}`
-      : name
-
     try {
       const existing = await pool.query('SELECT id FROM products WHERE sku = $1', [sku])
 
       if (existing.rows.length > 0) {
         await pool.query(
-          `UPDATE products SET name=$1, barcode=$2, barcode2=$3, needs_label=$4, updated_at=NOW() WHERE sku=$5`,
-          [fullName, ean, ean2, !hasBarcode, sku]
+          `UPDATE products
+             SET name=$1, barcode=$2, barcode2=$3, needs_label=$4,
+                 brand=$5, supplier=$6, updated_at=NOW()
+           WHERE sku=$7`,
+          [name, ean, ean2, !hasBarcode, brand, supplier, sku]
         )
         updated++
       } else {
         await pool.query(
-          `INSERT INTO products (sku, name, barcode, barcode2, needs_label, unit)
-           VALUES ($1, $2, $3, $4, $5, 'τεμ')`,
-          [sku, fullName, ean, ean2, !hasBarcode]
+          `INSERT INTO products (sku, name, barcode, barcode2, needs_label, brand, supplier, unit)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, 'τεμ')`,
+          [sku, name, ean, ean2, !hasBarcode, brand, supplier]
         )
         inserted++
       }
