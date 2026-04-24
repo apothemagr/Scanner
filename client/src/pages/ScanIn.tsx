@@ -366,7 +366,7 @@ export default function ScanIn() {
         <h2 style={{ flex: 1 }}>Παραλαβές</h2>
         <button className="btn-primary" style={{ padding: '10px 14px', fontSize: '0.9rem' }}
           onClick={() => setShowNewForm(v => !v)}>
-          + Νέα
+          + Νέα Παραλαβή
         </button>
       </div>
 
