@@ -1,5 +1,5 @@
 import * as XLSX from 'xlsx'
-import { pool } from '../src/db'
+import { query, withTransaction, closePool } from '../src/db'
 import * as path from 'path'
 import * as dotenv from 'dotenv'
 
@@ -37,7 +37,6 @@ async function importOrders() {
   const rows = XLSX.utils.sheet_to_json<OrderRow>(sheet, { raw: true })
   console.log(`Βρέθηκαν ${rows.length} γραμμές`)
 
-  // Group by Order No
   const orderMap = new Map<string, OrderRow[]>()
   for (const row of rows) {
     const key = String(row['Order No']).trim()
@@ -46,31 +45,30 @@ async function importOrders() {
   }
   console.log(`Παραγγελίες: ${orderMap.size}`)
 
-  const client = await pool.connect()
   let inserted = 0, skipped = 0, errors = 0
 
-  try {
-    for (const [orderNo, lines] of orderMap.entries()) {
-      const first = lines[0]
-      const transporter = String(first.Transporter || '').trim()
-      const orderType = transporter === 'PickUp' ? 'pickup' : 'courier'
+  for (const [orderNo, lines] of orderMap.entries()) {
+    const first = lines[0]
+    const transporter = String(first.Transporter || '').trim()
+    const orderType = transporter === 'PickUp' ? 'pickup' : 'courier'
 
-      try {
-        await client.query('BEGIN')
+    try {
+      // Check outside transaction (faster skip)
+      const existing = await query(
+        `SELECT id FROM pickings WHERE entersoft_so_id = $1`, [orderNo]
+      )
+      if (existing.rows.length > 0) {
+        skipped++
+        continue
+      }
 
-        const existing = await client.query(
-          `SELECT id FROM pickings WHERE entersoft_so_id = $1`, [orderNo]
-        )
-        if (existing.rows.length > 0) {
-          await client.query('ROLLBACK')
-          skipped++
-          continue
-        }
-
-        const pickingRes = await client.query(
+      await withTransaction(async (t) => {
+        const pickingRes = await t.query(
           `INSERT INTO pickings
-            (entersoft_so_id, customer_name, transporter, order_type, voucher_qty, invoice_date, print_date, status)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,'open') RETURNING id`,
+            (entersoft_so_id, customer_name, transporter, order_type, voucher_qty,
+             invoice_date, print_date, status)
+           OUTPUT INSERTED.id
+           VALUES ($1, $2, $3, $4, $5, $6, $7, 'open')`,
           [
             orderNo,
             String(first.Name || '').trim(),
@@ -85,43 +83,38 @@ async function importOrders() {
 
         for (const line of lines) {
           const sku = String(line.Code).trim()
-          const productRes = await client.query(
+          const productRes = await t.query(
             `SELECT id FROM products WHERE sku = $1`, [sku]
           )
           const productId = productRes.rows[0]?.id || null
 
-          // Find best location for this product
           let locationId: number | null = null
           if (productId) {
-            const locRes = await client.query(
-              `SELECT location_id FROM stock
+            const locRes = await t.query(
+              `SELECT TOP 1 location_id FROM stock
                WHERE product_id = $1 AND quantity >= $2
-               ORDER BY quantity DESC LIMIT 1`,
+               ORDER BY quantity DESC`,
               [productId, Number(line.QTY) || 1]
             )
             locationId = locRes.rows[0]?.location_id || null
           }
 
-          await client.query(
+          await t.query(
             `INSERT INTO picking_items (picking_id, product_id, sku, location_id, required_qty)
-             VALUES ($1,$2,$3,$4,$5)`,
+             VALUES ($1, $2, $3, $4, $5)`,
             [pickingId, productId, sku, locationId, Number(line.QTY) || 1]
           )
         }
+      })
 
-        await client.query('COMMIT')
-        inserted++
-      } catch (e) {
-        await client.query('ROLLBACK')
-        console.error(`Σφάλμα στην παραγγελία ${orderNo}:`, e)
-        errors++
-      }
+      inserted++
+    } catch (e) {
+      console.error(`Σφάλμα στην παραγγελία ${orderNo}:`, e)
+      errors++
     }
-  } finally {
-    client.release()
-    await pool.end()
   }
 
+  await closePool()
   console.log(`✓ Εισήχθησαν: ${inserted} | Παραλείφθηκαν: ${skipped} | Σφάλματα: ${errors}`)
 }
 

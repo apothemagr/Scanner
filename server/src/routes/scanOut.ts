@@ -1,58 +1,68 @@
 import { Router } from 'express'
-import { pool, query } from '../db'
+import { query, withTransaction } from '../db'
 
 const router = Router()
 
-// Λίστα ανοιχτών pickings (grouped by type)
+// Λίστα pickings με φίλτρα
 router.get('/pickings', async (req, res) => {
   const type = req.query.type as string | undefined
   const status = req.query.status as string | undefined
   const result = await query(
-    `SELECT p.*,
-      COUNT(pi.id) as item_count,
-      COUNT(pi.id) FILTER (WHERE pi.picked_qty >= pi.required_qty) as picked_count,
-      CASE
-        WHEN COUNT(pi.id) > 0 AND COUNT(pi.id) FILTER (WHERE pi.picked_qty >= pi.required_qty) = COUNT(pi.id) THEN 'completed'
-        WHEN COUNT(pi.id) FILTER (WHERE pi.picked_qty > 0) > 0 THEN 'in_progress'
-        ELSE 'open'
-      END as status
+    `SELECT p.id, p.entersoft_so_id, p.customer_name, p.transporter,
+        p.order_type, p.voucher_qty, p.invoice_date, p.print_date,
+        p.created_at, p.completed_at,
+        COUNT(pi.id) AS item_count,
+        SUM(CASE WHEN pi.picked_qty >= pi.required_qty THEN 1 ELSE 0 END) AS picked_count,
+        CASE
+          WHEN COUNT(pi.id) > 0
+           AND SUM(CASE WHEN pi.picked_qty >= pi.required_qty THEN 1 ELSE 0 END) = COUNT(pi.id)
+            THEN 'completed'
+          WHEN SUM(CASE WHEN pi.picked_qty > 0 THEN 1 ELSE 0 END) > 0
+            THEN 'in_progress'
+          ELSE 'open'
+        END AS status
      FROM pickings p
      LEFT JOIN picking_items pi ON pi.picking_id = p.id
-     WHERE ($1::text IS NULL OR p.order_type = $1)
-     GROUP BY p.id
+     WHERE ($1 IS NULL OR p.order_type = $1)
+     GROUP BY p.id, p.entersoft_so_id, p.customer_name, p.transporter,
+              p.order_type, p.voucher_qty, p.invoice_date, p.print_date,
+              p.created_at, p.completed_at
      HAVING
-       $2::text IS NULL
-       OR ($2 = 'open'        AND COUNT(pi.id) FILTER (WHERE pi.picked_qty > 0) = 0)
-       OR ($2 = 'in_progress' AND COUNT(pi.id) FILTER (WHERE pi.picked_qty > 0) > 0
-                              AND COUNT(pi.id) FILTER (WHERE pi.picked_qty >= pi.required_qty) < COUNT(pi.id))
+       $2 IS NULL
+       OR ($2 = 'open'        AND SUM(CASE WHEN pi.picked_qty > 0 THEN 1 ELSE 0 END) = 0)
+       OR ($2 = 'in_progress' AND SUM(CASE WHEN pi.picked_qty > 0 THEN 1 ELSE 0 END) > 0
+                              AND SUM(CASE WHEN pi.picked_qty >= pi.required_qty THEN 1 ELSE 0 END) < COUNT(pi.id))
        OR ($2 = 'completed'   AND COUNT(pi.id) > 0
-                              AND COUNT(pi.id) FILTER (WHERE pi.picked_qty >= pi.required_qty) = COUNT(pi.id))
+                              AND SUM(CASE WHEN pi.picked_qty >= pi.required_qty THEN 1 ELSE 0 END) = COUNT(pi.id))
      ORDER BY p.invoice_date, p.entersoft_so_id`,
     [type || null, status || null]
   )
   return res.json(result.rows)
 })
 
-// Λεπτομέρειες picking με θέσεις
+// Λεπτομέρειες picking
 router.get('/pickings/:id', async (req, res) => {
   const picking = await query(`SELECT * FROM pickings WHERE id = $1`, [req.params.id])
   if (picking.rows.length === 0) return res.status(404).json({ error: 'Δεν βρέθηκε' })
 
   const items = await query(
-    `SELECT pi.*, COALESCE(p.sku, pi.sku) as sku, p.name, p.barcode, p.barcode2, p.unit,
-      l.code as location_code
+    `SELECT pi.id, pi.picking_id, pi.product_id, pi.location_id,
+        pi.required_qty, pi.picked_qty, pi.scanned_at,
+        COALESCE(p.sku, pi.sku) AS sku,
+        p.name, p.barcode, p.barcode2, p.unit,
+        l.code AS location_code
      FROM picking_items pi
      LEFT JOIN products p ON p.id = pi.product_id
      LEFT JOIN locations l ON l.id = pi.location_id
      WHERE pi.picking_id = $1
-     ORDER BY l.code NULLS LAST, p.name`,
+     ORDER BY CASE WHEN l.code IS NULL THEN 1 ELSE 0 END, l.code, p.name`,
     [req.params.id]
   )
 
   return res.json({ ...picking.rows[0], items: items.rows })
 })
 
-// Scan προϊόντος — αν η θέση είναι μοναδική, κάνει αυτόματα pick
+// Scan προϊόντος
 router.post('/pickings/:id/scan-product', async (req, res) => {
   const { barcode_or_sku } = req.body
 
@@ -66,7 +76,7 @@ router.post('/pickings/:id/scan-product', async (req, res) => {
   const prod = product.rows[0]
 
   const pickItem = await query(
-    `SELECT pi.*, l.code as location_code
+    `SELECT pi.*, l.code AS location_code
      FROM picking_items pi
      LEFT JOIN locations l ON l.id = pi.location_id
      WHERE pi.picking_id = $1 AND pi.product_id = $2`,
@@ -78,7 +88,6 @@ router.post('/pickings/:id/scan-product', async (req, res) => {
 
   const item = pickItem.rows[0]
   if (Number(item.picked_qty) >= Number(item.required_qty)) {
-    // Επιστρέφει un-pick mode
     return res.json({
       mode: 'unpick',
       product_id: prod.id,
@@ -92,9 +101,8 @@ router.post('/pickings/:id/scan-product', async (req, res) => {
   }
 
   const qty = Number(item.required_qty) - Number(item.picked_qty)
-
   const stockLocs = await query(
-    `SELECT s.location_id, l.code as location_code
+    `SELECT s.location_id, l.code AS location_code
      FROM stock s JOIN locations l ON l.id = s.location_id
      WHERE s.product_id = $1 AND s.quantity > 0`,
     [prod.id]
@@ -143,60 +151,47 @@ router.post('/pickings/:id/scan-location', async (req, res) => {
     return res.status(400).json({ error: 'Ποσότητα υπερβαίνει την παραγγελία' })
   }
 
-  const client = await pool.connect()
-  try {
-    await client.query('BEGIN')
-
-    await client.query(
-      `UPDATE picking_items SET picked_qty = $1, scanned_at = NOW()
+  const result = await withTransaction(async (t) => {
+    await t.query(
+      `UPDATE picking_items SET picked_qty = $1, scanned_at = GETDATE()
        WHERE picking_id = $2 AND product_id = $3`,
       [newQty, req.params.id, product_id]
     )
-
-    // Αφαίρεση από stock
-    await client.query(
-      `UPDATE stock SET quantity = quantity - $1, updated_at = NOW()
+    await t.query(
+      `UPDATE stock SET quantity = quantity - $1, updated_at = GETDATE()
        WHERE product_id = $2 AND location_id = $3`,
       [qty, product_id, loc.id]
     )
-
-    await client.query(
+    await t.query(
       `INSERT INTO stock_movements (product_id, location_id, type, quantity, reference_type, reference_id)
-       VALUES ($1,$2,'out',$3,'picking',$4)`,
+       VALUES ($1, $2, 'out', $3, 'picking', $4)`,
       [product_id, loc.id, qty, req.params.id]
     )
-
-    // Έλεγχος ολοκλήρωσης παραγγελίας
-    const remaining = await client.query(
-      `SELECT COUNT(*) as cnt FROM picking_items
+    const remaining = await t.query(
+      `SELECT COUNT(*) AS cnt FROM picking_items
        WHERE picking_id = $1 AND picked_qty < required_qty`,
       [req.params.id]
     )
-    const isComplete = remaining.rows[0].cnt === '0'
+    const isComplete = Number(remaining.rows[0].cnt) === 0
     if (isComplete) {
-      await client.query(
-        `UPDATE pickings SET status='completed', completed_at=NOW() WHERE id=$1`,
+      await t.query(
+        `UPDATE pickings SET status='completed', completed_at=GETDATE() WHERE id=$1`,
         [req.params.id]
       )
     }
+    return { isComplete }
+  })
 
-    await client.query('COMMIT')
-    return res.json({
-      success: true,
-      product: item.name,
-      picked: newQty,
-      required: Number(item.required_qty),
-      order_complete: isComplete,
-    })
-  } catch (e) {
-    await client.query('ROLLBACK')
-    throw e
-  } finally {
-    client.release()
-  }
+  return res.json({
+    success: true,
+    product: item.name,
+    picked: newQty,
+    required: Number(item.required_qty),
+    order_complete: result.isComplete,
+  })
 })
 
-// Επαναφορά είδους στη θέση (un-pick)
+// Επαναφορά είδους (un-pick)
 router.post('/pickings/:id/unpick', async (req, res) => {
   const { product_id, location_code, quantity } = req.body
 
@@ -207,7 +202,8 @@ router.post('/pickings/:id/unpick', async (req, res) => {
   const loc = locRes.rows[0]
 
   const pickItem = await query(
-    `SELECT pi.*, p.name FROM picking_items pi JOIN products p ON p.id = pi.product_id
+    `SELECT pi.*, p.name FROM picking_items pi
+     JOIN products p ON p.id = pi.product_id
      WHERE pi.picking_id = $1 AND pi.product_id = $2`,
     [req.params.id, product_id]
   )
@@ -217,45 +213,37 @@ router.post('/pickings/:id/unpick', async (req, res) => {
   const item = pickItem.rows[0]
   const qty = Number(quantity) || Number(item.picked_qty)
 
-  const client = await pool.connect()
-  try {
-    await client.query('BEGIN')
-
-    await client.query(
-      `UPDATE picking_items SET picked_qty = picked_qty - $1, scanned_at = NULL, location_id = $2
+  await withTransaction(async (t) => {
+    await t.query(
+      `UPDATE picking_items
+       SET picked_qty = picked_qty - $1, scanned_at = NULL, location_id = $2
        WHERE picking_id = $3 AND product_id = $4`,
       [qty, loc.id, req.params.id, product_id]
     )
-
-    // Επαναφορά stock
-    await client.query(
-      `INSERT INTO stock (product_id, location_id, quantity, updated_at)
-       VALUES ($1, $2, $3, NOW())
-       ON CONFLICT (product_id, location_id)
-       DO UPDATE SET quantity = stock.quantity + $3, updated_at = NOW()`,
+    // Επαναφορά stock με MERGE
+    await t.query(
+      `MERGE stock AS tgt
+       USING (SELECT $1 AS product_id, $2 AS location_id, $3 AS qty) AS src
+       ON tgt.product_id = src.product_id AND tgt.location_id = src.location_id
+       WHEN MATCHED THEN
+         UPDATE SET quantity = tgt.quantity + src.qty, updated_at = GETDATE()
+       WHEN NOT MATCHED THEN
+         INSERT (product_id, location_id, quantity)
+         VALUES (src.product_id, src.location_id, src.qty);`,
       [product_id, loc.id, qty]
     )
-
-    await client.query(
+    await t.query(
       `INSERT INTO stock_movements (product_id, location_id, type, quantity, reference_type, reference_id)
        VALUES ($1, $2, 'in', $3, 'unpick', $4)`,
       [product_id, loc.id, qty, req.params.id]
     )
-
-    // Ανοίγουμε ξανά την παραγγελία αν ήταν completed
-    await client.query(
+    await t.query(
       `UPDATE pickings SET status = 'open', completed_at = NULL WHERE id = $1`,
       [req.params.id]
     )
+  })
 
-    await client.query('COMMIT')
-    return res.json({ success: true, product: item.name, location: loc.code })
-  } catch (e) {
-    await client.query('ROLLBACK')
-    throw e
-  } finally {
-    client.release()
-  }
+  return res.json({ success: true, product: item.name, location: loc.code })
 })
 
 export default router

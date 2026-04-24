@@ -1,4 +1,4 @@
-import { pool } from '../src/db'
+import { query, closePool } from '../src/db'
 import * as zlib from 'zlib'
 import * as https from 'https'
 import * as dotenv from 'dotenv'
@@ -53,11 +53,11 @@ export async function syncUrls() {
       console.log(`  Βρέθηκαν ${entries.length} URLs`)
 
       for (const { code, url } of entries) {
-        const res = await pool.query(
+        const res = await query(
           `UPDATE products SET site_url = $1 WHERE sku = $2`,
           [url, code]
         )
-        if (res.rowCount && res.rowCount > 0) updated++
+        if (res.rowCount > 0) updated++
       }
     } catch (e) {
       console.error(`  Σφάλμα στο ${sitemapUrl}:`, e)
@@ -69,5 +69,5 @@ export async function syncUrls() {
 
 // Εκτέλεση αν τρέχει απευθείας
 if (require.main === module) {
-  syncUrls().then(() => pool.end()).catch(console.error)
+  syncUrls().then(() => closePool()).catch(console.error)
 }

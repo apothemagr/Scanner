@@ -1,139 +1,115 @@
-import { Router } from 'express';
-import { pool, query } from '../db';
+import { Router } from 'express'
+import { query, withTransaction } from '../db'
 
-const router = Router();
+const router = Router()
 
 // Δημιουργία νέας παραλαβής
 router.post('/receipts', async (req, res) => {
-  const { entersoft_po_id, supplier_name, created_by, items } = req.body;
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-
-    const receipt = await client.query(
+  const { entersoft_po_id, supplier_name, created_by, items } = req.body
+  const receipt = await withTransaction(async (t) => {
+    const r = await t.query(
       `INSERT INTO receipts (entersoft_po_id, supplier_name, created_by)
-       VALUES ($1, $2, $3) RETURNING *`,
+       OUTPUT INSERTED.*
+       VALUES ($1, $2, $3)`,
       [entersoft_po_id || null, supplier_name, created_by]
-    );
-    const receiptId = receipt.rows[0].id;
-
+    )
+    const receiptId = r.rows[0].id
     if (items?.length) {
       for (const item of items) {
-        await client.query(
+        await t.query(
           `INSERT INTO receipt_items (receipt_id, product_id, expected_qty)
            VALUES ($1, $2, $3)`,
           [receiptId, item.product_id, item.expected_qty]
-        );
+        )
       }
     }
-
-    await client.query('COMMIT');
-    return res.status(201).json(receipt.rows[0]);
-  } catch (e) {
-    await client.query('ROLLBACK');
-    throw e;
-  } finally {
-    client.release();
-  }
-});
+    return r.rows[0]
+  })
+  return res.status(201).json(receipt)
+})
 
 // Scan ενός προϊόντος κατά την παραλαβή
 router.post('/receipts/:id/scan', async (req, res) => {
-  const { product_id, location_id, quantity } = req.body;
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-
-    // Ενημέρωση receipt item
-    await client.query(
+  const { product_id, location_id, quantity } = req.body
+  await withTransaction(async (t) => {
+    await t.query(
       `UPDATE receipt_items
-       SET received_qty = received_qty + $1, location_id = $2, scanned_at = NOW()
+       SET received_qty = received_qty + $1, location_id = $2, scanned_at = GETDATE()
        WHERE receipt_id = $3 AND product_id = $4`,
       [quantity, location_id, req.params.id, product_id]
-    );
-
+    )
     // Upsert stock
-    await client.query(
-      `INSERT INTO stock (product_id, location_id, quantity)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (product_id, location_id)
-       DO UPDATE SET quantity = stock.quantity + $3, updated_at = NOW()`,
+    await t.query(
+      `MERGE stock AS tgt
+       USING (SELECT $1 AS product_id, $2 AS location_id, $3 AS qty) AS src
+       ON tgt.product_id = src.product_id AND tgt.location_id = src.location_id
+       WHEN MATCHED THEN
+         UPDATE SET quantity = tgt.quantity + src.qty, updated_at = GETDATE()
+       WHEN NOT MATCHED THEN
+         INSERT (product_id, location_id, quantity)
+         VALUES (src.product_id, src.location_id, src.qty);`,
       [product_id, location_id, quantity]
-    );
-
-    // Καταγραφή κίνησης
-    await client.query(
+    )
+    await t.query(
       `INSERT INTO stock_movements (product_id, location_id, type, quantity, reference_type, reference_id)
        VALUES ($1, $2, 'in', $3, 'receipt', $4)`,
       [product_id, location_id, quantity, req.params.id]
-    );
-
-    await client.query('COMMIT');
-    return res.json({ success: true });
-  } catch (e) {
-    await client.query('ROLLBACK');
-    throw e;
-  } finally {
-    client.release();
-  }
-});
+    )
+  })
+  return res.json({ success: true })
+})
 
 // Ολοκλήρωση παραλαβής
 router.post('/receipts/:id/complete', async (req, res) => {
   await query(
-    `UPDATE receipts SET status='completed', completed_at=NOW() WHERE id=$1`,
+    `UPDATE receipts SET status='completed', completed_at=GETDATE() WHERE id=$1`,
     [req.params.id]
-  );
-  return res.json({ success: true });
-});
+  )
+  return res.json({ success: true })
+})
 
-// Γρήγορη παραλαβή χωρίς session (batch)
+// Γρήγορη παραλαβή (χωρίς session)
 router.post('/receipts/quick', async (req, res) => {
-  const { product_id, location_id, quantity } = req.body;
+  const { product_id, location_id, quantity } = req.body
   if (!product_id || !location_id || !quantity) {
-    return res.status(400).json({ error: 'product_id, location_id, quantity required' });
+    return res.status(400).json({ error: 'product_id, location_id, quantity required' })
   }
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-
-    await client.query(
-      `INSERT INTO stock (product_id, location_id, quantity)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (product_id, location_id)
-       DO UPDATE SET quantity = stock.quantity + $3, updated_at = NOW()`,
+  await withTransaction(async (t) => {
+    await t.query(
+      `MERGE stock AS tgt
+       USING (SELECT $1 AS product_id, $2 AS location_id, $3 AS qty) AS src
+       ON tgt.product_id = src.product_id AND tgt.location_id = src.location_id
+       WHEN MATCHED THEN
+         UPDATE SET quantity = tgt.quantity + src.qty, updated_at = GETDATE()
+       WHEN NOT MATCHED THEN
+         INSERT (product_id, location_id, quantity)
+         VALUES (src.product_id, src.location_id, src.qty);`,
       [product_id, location_id, quantity]
-    );
-
-    await client.query(
+    )
+    await t.query(
       `INSERT INTO stock_movements (product_id, location_id, type, quantity, reference_type)
        VALUES ($1, $2, 'in', $3, 'quick_receipt')`,
       [product_id, location_id, quantity]
-    );
-
-    await client.query('COMMIT');
-    return res.json({ success: true });
-  } catch (e) {
-    await client.query('ROLLBACK');
-    throw e;
-  } finally {
-    client.release();
-  }
-});
+    )
+  })
+  return res.json({ success: true })
+})
 
 // Λίστα ανοιχτών παραλαβών
 router.get('/receipts', async (_req, res) => {
   const result = await query(
-    `SELECT r.*,
-      COUNT(ri.id) as item_count,
-      COUNT(ri.id) FILTER (WHERE ri.scanned_at IS NOT NULL) as scanned_count
+    `SELECT r.id, r.entersoft_po_id, r.supplier_name, r.created_by,
+        r.status, r.created_at, r.completed_at,
+        COUNT(ri.id) AS item_count,
+        SUM(CASE WHEN ri.scanned_at IS NOT NULL THEN 1 ELSE 0 END) AS scanned_count
      FROM receipts r
      LEFT JOIN receipt_items ri ON ri.receipt_id = r.id
      WHERE r.status = 'open'
-     GROUP BY r.id
+     GROUP BY r.id, r.entersoft_po_id, r.supplier_name, r.created_by,
+              r.status, r.created_at, r.completed_at
      ORDER BY r.created_at DESC`
-  );
-  return res.json(result.rows);
-});
+  )
+  return res.json(result.rows)
+})
 
-export default router;
+export default router

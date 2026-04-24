@@ -1,5 +1,5 @@
 import * as XLSX from 'xlsx'
-import { pool } from '../src/db'
+import { query, closePool } from '../src/db'
 import * as path from 'path'
 import * as dotenv from 'dotenv'
 
@@ -45,22 +45,22 @@ async function importProducts() {
     if (!sku || !name) { errors++; continue }
 
     try {
-      const existing = await pool.query('SELECT id FROM products WHERE sku = $1', [sku])
+      const existing = await query('SELECT id FROM products WHERE sku = $1', [sku])
 
       if (existing.rows.length > 0) {
-        await pool.query(
+        await query(
           `UPDATE products
-             SET name=$1, barcode=$2, barcode2=$3, needs_label=$4,
-                 brand=$5, supplier=$6, updated_at=NOW()
+           SET name=$1, barcode=$2, barcode2=$3, needs_label=$4,
+               brand=$5, supplier=$6, updated_at=GETDATE()
            WHERE sku=$7`,
-          [name, ean, ean2, !hasBarcode, brand, supplier, sku]
+          [name, ean, ean2, hasBarcode ? 0 : 1, brand, supplier, sku]
         )
         updated++
       } else {
-        await pool.query(
+        await query(
           `INSERT INTO products (sku, name, barcode, barcode2, needs_label, brand, supplier, unit)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, 'τεμ')`,
-          [sku, name, ean, ean2, !hasBarcode, brand, supplier]
+           VALUES ($1, $2, $3, $4, $5, $6, $7, N'τεμ')`,
+          [sku, name, ean, ean2, hasBarcode ? 0 : 1, brand, supplier]
         )
         inserted++
       }
@@ -75,7 +75,7 @@ async function importProducts() {
   console.log(`   Ενημερώθηκαν: ${updated}`)
   console.log(`   Σφάλματα:     ${errors}`)
 
-  await pool.end()
+  await closePool()
 }
 
 importProducts().catch(console.error)

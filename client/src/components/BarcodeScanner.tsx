@@ -93,7 +93,7 @@ export default function BarcodeScanner({ onScan, placeholder = 'Σκανάρισ
         const results = await detectorRef.current.detect(videoRef.current)
         if (results.length > 0) {
           navigator.vibrate?.(100)
-          onScan(results[0].rawValue)
+          onScan(results[0].rawValue.trim())
           // Μικρή παύση μετά από επιτυχές scan
           await new Promise(r => setTimeout(r, 1200))
         } else {
