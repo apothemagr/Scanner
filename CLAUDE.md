@@ -44,10 +44,10 @@ npm run dev
 
 ## Entersoft sync (κάθε 30")
 - View: `CS_ACS_Pickup` στη βάση APOTHEMA
-- Columns: ADCode, ADRegistrationDate, WebOrderID, ProductID, ProductQTY, route, modifieddate, TransporterCode, TransporterName
-- Φίλτρο: μόνο σημερινές (ADRegistrationDate = GETDATE())
+- Columns: ADCode, DateCreated, CustomerName, WebOrderID, ProductID, ProductQTY, route, modifieddate, TransporterCode, TransporterName
+- Φίλτρο: μόνο σημερινές (DateCreated = GETDATE())
 - TransporterCode `0000001` → pickup, αλλιώς → courier
-- Mapping: ADCode→entersoft_so_id, WebOrderID→customer_name, modifieddate→print_date
+- Mapping: ADCode→entersoft_so_id, CustomerName→customer_name, DateCreated→invoice_date, modifieddate→print_date
 - Ώρα στη λίστα: `created_at` (UTC) — ώρα που μπήκε στο local σύστημα
 
 ## Import scripts

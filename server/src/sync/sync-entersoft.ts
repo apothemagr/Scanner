@@ -25,7 +25,8 @@ async function getEsPool(): Promise<sql.ConnectionPool> {
 
 interface PickupRow {
   ADCode: string
-  ADRegistrationDate: Date
+  DateCreated: Date
+  CustomerName: string
   WebOrderID: string
   ProductID: string
   ProductQTY: number
@@ -39,12 +40,12 @@ export async function syncEntersoft() {
   try {
     const esPool = await getEsPool()
 
-    // Διάβασε μόνο παραγγελίες με σημερινή ημερομηνία
+    // Διάβασε μόνο παραγγελίες με σημερινή ημερομηνία δημιουργίας
     const result = await esPool.request().query<PickupRow>(
-      `SELECT ADCode, ADRegistrationDate, WebOrderID, ProductID, ProductQTY,
+      `SELECT ADCode, DateCreated, CustomerName, WebOrderID, ProductID, ProductQTY,
               route, modifieddate, TransporterCode, TransporterName
        FROM CS_ACS_Pickup WITH (NOLOCK)
-       WHERE CAST(ADRegistrationDate AS DATE) = CAST(GETDATE() AS DATE)`
+       WHERE CAST(DateCreated AS DATE) = CAST(GETDATE() AS DATE)`
     )
     const rows: PickupRow[] = Array.from(result.recordset)
 
@@ -75,17 +76,18 @@ export async function syncEntersoft() {
           // Νέα παραγγελία — insert
           const ins = await query(
             `INSERT INTO pickings
-              (entersoft_so_id, customer_name, transporter, order_type,
+              (entersoft_so_id, customer_name, web_order_id, transporter, order_type,
                voucher_qty, invoice_date, print_date, status)
              OUTPUT INSERTED.id
-             VALUES ($1, $2, $3, $4, $5, $6, $7, 'open')`,
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'open')`,
             [
               adCode,
-              String(first.WebOrderID || '').trim(),
+              String(first.CustomerName || first.WebOrderID || '').trim(),
+              String(first.WebOrderID || '').trim() || null,
               String(first.TransporterName || '').trim(),
               String(first.TransporterCode).trim() === '0000001' ? 'pickup' : 'courier',
               1,
-              first.ADRegistrationDate,
+              first.DateCreated,
               first.modifieddate || null,
             ]
           )
@@ -93,6 +95,26 @@ export async function syncEntersoft() {
           inserted++
         } else {
           pickingId = existing.rows[0].id as number
+          const newName = String(first.CustomerName || '').trim()
+          if (newName) {
+            await query(
+              `UPDATE pickings SET customer_name = $1 WHERE id = $2 AND customer_name != $1`,
+              [newName, pickingId]
+            )
+          }
+          const webId = String(first.WebOrderID || '').trim()
+          if (webId) {
+            await query(
+              `UPDATE pickings SET web_order_id = $1 WHERE id = $2 AND (web_order_id IS NULL OR web_order_id != $1)`,
+              [webId, pickingId]
+            )
+          }
+          if (first.DateCreated) {
+            await query(
+              `UPDATE pickings SET invoice_date = $1 WHERE id = $2 AND invoice_date != $1`,
+              [first.DateCreated, pickingId]
+            )
+          }
           updated++
         }
 
@@ -100,23 +122,14 @@ export async function syncEntersoft() {
         for (const line of lines) {
           const sku = String(line.ProductID).trim()
 
-          // Βρες product_id αν υπάρχει στη local βάση
-          const prodRes = await query(
-            `SELECT id FROM products WITH (NOLOCK) WHERE sku = $1`, [sku]
-          )
-          const productId = prodRes.rows[0]?.id || null
-
           // Βρες best location αν υπάρχει stock
-          let locationId: number | null = null
-          if (productId) {
-            const locRes = await query(
-              `SELECT TOP 1 location_id FROM stock WITH (NOLOCK)
-               WHERE product_id = $1 AND quantity >= $2
-               ORDER BY quantity DESC`,
-              [productId, Number(line.ProductQTY) || 1]
-            )
-            locationId = locRes.rows[0]?.location_id || null
-          }
+          const locRes = await query(
+            `SELECT TOP 1 location_id FROM stock WITH (NOLOCK)
+             WHERE sku = $1 AND quantity >= $2
+             ORDER BY quantity DESC`,
+            [sku, Number(line.ProductQTY) || 1]
+          )
+          const locationId = locRes.rows[0]?.location_id || null
 
           // Insert μόνο αν δεν υπάρχει ήδη αυτή η γραμμή
           await query(
@@ -125,9 +138,9 @@ export async function syncEntersoft() {
                WHERE picking_id = $1 AND sku = $2
              )
              INSERT INTO picking_items
-               (picking_id, product_id, sku, location_id, required_qty)
-             VALUES ($1, $3, $2, $4, $5)`,
-            [pickingId, sku, productId, locationId, Number(line.ProductQTY) || 1]
+               (picking_id, sku, location_id, required_qty)
+             VALUES ($1, $2, $3, $4)`,
+            [pickingId, sku, locationId, Number(line.ProductQTY) || 1]
           )
         }
       } catch (e) {

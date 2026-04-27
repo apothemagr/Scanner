@@ -1,66 +1,8 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
-
-const API = import.meta.env.VITE_API_URL || 'http://localhost:3001/api'
-
-function toSlug(txt: string): string {
-  let s = txt
-  s = s.replace(/[αΑ][ιίΙΊ]/g, 'e')
-  s = s.replace(/[οΟΕε][ιίΙΊ]/g, 'i')
-  s = s.replace(/[αΑ][υύΥΎ](?=[θΘκΚξΞπΠσςΣτΤφΦχΧψΨ]|\s|$)/g, 'af')
-  s = s.replace(/[αΑ][υύΥΎ]/g, 'av')
-  s = s.replace(/[εΕ][υύΥΎ](?=[θΘκΚξΞπΠσςΣτΤφΦχΧψΨ]|\s|$)/g, 'ef')
-  s = s.replace(/[εΕ][υύΥΎ]/g, 'ev')
-  s = s.replace(/[οΟ][υύΥΎ]/g, 'ou')
-  s = s.replace(/(^|\s)[μΜ][πΠ]/g, '$1b')
-  s = s.replace(/[μΜ][πΠ](\s|$)/g, 'b$1')
-  s = s.replace(/[μΜ][πΠ]/g, 'mp')
-  s = s.replace(/[νΝ][τΤ]/g, 'nt')
-  s = s.replace(/[τΤ][σΣ]/g, 'ts')
-  s = s.replace(/[τΤ][ζΖ]/g, 'tz')
-  s = s.replace(/[γΓ][γΓ]/g, 'ng')
-  s = s.replace(/[γΓ][κΚ]/g, 'gk')
-  s = s.replace(/[ηΗ][υΥ](?=[θΘκΚξΞπΠσςΣτΤφΦχΧψΨ]|\s|$)/g, 'if')
-  s = s.replace(/[ηΗ][υΥ]/g, 'iu')
-  s = s.replace(/[θΘ]/g, 'th')
-  s = s.replace(/[χΧ]/g, 'ch')
-  s = s.replace(/[ψΨ]/g, 'ps')
-  s = s.replace(/[αάΑΆ]/g, 'a')
-  s = s.replace(/[βΒ]/g, 'v')
-  s = s.replace(/[γΓ]/g, 'g')
-  s = s.replace(/[δΔ]/g, 'd')
-  s = s.replace(/[εέΕΈ]/g, 'e')
-  s = s.replace(/[ζΖ]/g, 'z')
-  s = s.replace(/[ηήΗΉ]/g, 'i')
-  s = s.replace(/[ιίϊΙΊΪ]/g, 'i')
-  s = s.replace(/[κΚ]/g, 'k')
-  s = s.replace(/[λΛ]/g, 'l')
-  s = s.replace(/[μΜ]/g, 'm')
-  s = s.replace(/[νΝ]/g, 'n')
-  s = s.replace(/[ξΞ]/g, 'x')
-  s = s.replace(/[οόΟΌ]/g, 'o')
-  s = s.replace(/[πΠ]/g, 'p')
-  s = s.replace(/[ρΡ]/g, 'r')
-  s = s.replace(/[σςΣ]/g, 's')
-  s = s.replace(/[τΤ]/g, 't')
-  s = s.replace(/[υύϋΥΎΫ]/g, 'i')
-  s = s.replace(/[φΦ]/g, 'f')
-  s = s.replace(/[ωώΩΏ]/g, 'o')
-  s = s.replace(/€/g, 'eu')
-  s = s.replace(/&/g, 'n')
-  s = s.replace(/\s/g, '-')
-  s = s.toLowerCase()
-  s = s.replace(/[^a-z0-9]/g, '-')
-  s = s.replace(/-{2,}/g, '-')
-  s = s.replace(/^-+|-+$/g, '')
-  return s
-}
-
-function productUrl(sku: string, name: string): string {
-  return `https://www.apothema.gr/${toSlug(name)}-${sku}p`
-}
+import { API, authFetch } from '../api'
+import PrintLabelModal from '../components/PrintLabelModal'
 
 interface StockItem {
-  id: number
   sku: string
   name: string
   unit: string
@@ -69,6 +11,7 @@ interface StockItem {
   total_quantity: number
   locations: { location: string; qty: number }[] | null
   site_url: string | null
+  ecom_stock: number
 }
 
 type QtyFilter = 'all' | 'in_stock' | 'low' | 'zero'
@@ -167,13 +110,36 @@ function SearchableSelect({ value, onChange, options, placeholder }: SearchableS
   )
 }
 
+const FILTERS_KEY = 'stock_filters_v1'
+type SavedFilters = { search: string; skuSearch: string; brand: string; supplier: string; qtyFilter: QtyFilter }
+function loadFilters(): SavedFilters {
+  try {
+    const raw = localStorage.getItem(FILTERS_KEY)
+    if (raw) return JSON.parse(raw) as SavedFilters
+  } catch { /* ignore */ }
+  return { search: '', skuSearch: '', brand: '', supplier: '', qtyFilter: 'all' }
+}
+
+// Module-level cache — επιβιώνει mount/unmount μέσα στο ίδιο session
+type StockCache = { sig: string; items: StockItem[]; brands: string[]; suppliers: string[] }
+let stockCache: StockCache | null = null
+const filtersSig = (f: SavedFilters) => JSON.stringify(f)
+
 export default function Stock() {
-  const [items, setItems] = useState<StockItem[]>([])
-  const [search, setSearch] = useState('')
-  const [brand, setBrand] = useState('')
-  const [supplier, setSupplier] = useState('')
-  const [qtyFilter, setQtyFilter] = useState<QtyFilter>('all')
-  const [loading, setLoading] = useState(true)
+  const initial = loadFilters()
+  const [items, setItems] = useState<StockItem[]>(() => {
+    if (stockCache && stockCache.sig === filtersSig(initial)) return stockCache.items
+    return []
+  })
+  const [brands, setBrands] = useState<string[]>(() => stockCache?.brands || [])
+  const [suppliers, setSuppliers] = useState<string[]>(() => stockCache?.suppliers || [])
+  const [search, setSearch] = useState(initial.search)
+  const [skuSearch, setSkuSearch] = useState(initial.skuSearch)
+  const [brand, setBrand] = useState(initial.brand)
+  const [supplier, setSupplier] = useState(initial.supplier)
+  const [qtyFilter, setQtyFilter] = useState<QtyFilter>(initial.qtyFilter)
+  const [loading, setLoading] = useState(false)
+  const [printSku, setPrintSku] = useState<string | null>(null)
   const [headerVisible, setHeaderVisible] = useState(true)
   const lastScrollY = useRef(0)
   const listRef = useRef<HTMLDivElement>(null)
@@ -196,42 +162,67 @@ export default function Stock() {
     return () => container.removeEventListener('scroll', onScroll)
   }, [])
 
+  // Φόρτωση brands/suppliers μία φορά (από ecom)
   useEffect(() => {
-    fetch(`${API}/stock`)
-      .then(r => r.json())
-      .then(data => { setItems(data); setLoading(false) })
-      .catch(() => setLoading(false))
+    if (brands.length === 0) authFetch(`${API}/stock/brands`).then(r => r.json()).then(d => Array.isArray(d) && setBrands(d)).catch(() => {})
+    if (suppliers.length === 0) authFetch(`${API}/stock/suppliers`).then(r => r.json()).then(d => Array.isArray(d) && setSuppliers(d)).catch(() => {})
   }, [])
 
-  const brands = useMemo(() => {
-    const set = new Set<string>()
-    items.forEach(i => { if (i.brand) set.add(i.brand) })
-    return Array.from(set).sort()
-  }, [items])
+  // Persist filters σε localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem(FILTERS_KEY, JSON.stringify({ search, skuSearch, brand, supplier, qtyFilter }))
+    } catch { /* ignore */ }
+  }, [search, skuSearch, brand, supplier, qtyFilter])
 
-  const suppliers = useMemo(() => {
-    const set = new Set<string>()
-    items.forEach(i => { if (i.supplier) set.add(i.supplier) })
-    return Array.from(set).sort()
-  }, [items])
+  // Φόρτωση προϊόντων με βάση τα φίλτρα (debounced)
+  useEffect(() => {
+    const filters: SavedFilters = { search, skuSearch, brand, supplier, qtyFilter }
+    const sig = filtersSig(filters)
+    const hasFilter = !!(search.trim() || skuSearch.trim() || brand || supplier || (qtyFilter !== 'all'))
+    if (!hasFilter) {
+      setItems([])
+      stockCache = null
+      return
+    }
+    // Αν cache ταιριάζει με τα τρέχοντα φίλτρα, μην ξανακάνεις fetch
+    if (stockCache && stockCache.sig === sig) {
+      setItems(stockCache.items)
+      return
+    }
+    const params = new URLSearchParams()
+    if (search.trim()) params.set('q', search.trim())
+    if (skuSearch.trim()) params.set('sku', skuSearch.trim())
+    if (brand) params.set('brand', brand)
+    if (supplier) params.set('supplier', supplier)
+    if (qtyFilter !== 'all') params.set('qty', qtyFilter)
+    setLoading(true)
+    const timer = setTimeout(() => {
+      authFetch(`${API}/stock?${params.toString()}`)
+        .then(r => r.json())
+        .then(data => {
+          const arr = Array.isArray(data) ? data : []
+          setItems(arr)
+          setLoading(false)
+          stockCache = { sig, items: arr, brands, suppliers }
+        })
+        .catch(() => { setItems([]); setLoading(false) })
+    }, 250)
+    return () => clearTimeout(timer)
+  }, [search, skuSearch, brand, supplier, qtyFilter])
 
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    return items.filter(i => {
-      if (q && !i.name.toLowerCase().includes(q) && !i.sku.toLowerCase().includes(q)) return false
-      if (brand && i.brand !== brand) return false
-      if (supplier && i.supplier !== supplier) return false
-      if (qtyFilter === 'in_stock' && i.total_quantity <= 0) return false
-      if (qtyFilter === 'low' && (i.total_quantity < 1 || i.total_quantity > 5)) return false
-      if (qtyFilter === 'zero' && i.total_quantity !== 0) return false
-      return true
-    })
-  }, [items, search, brand, supplier, qtyFilter])
+  // Ενημέρωση cache για brands/suppliers όταν φορτώνουν
+  useEffect(() => {
+    if (stockCache) stockCache = { ...stockCache, brands, suppliers }
+  }, [brands, suppliers])
 
-  const hasActiveFilters = !!(brand || supplier || qtyFilter !== 'all' || search)
+  const filtered = items
+
+  const hasActiveFilters = !!(brand || supplier || qtyFilter !== 'all' || search || skuSearch)
 
   const clearFilters = () => {
     setSearch('')
+    setSkuSearch('')
     setBrand('')
     setSupplier('')
     setQtyFilter('all')
@@ -240,28 +231,54 @@ export default function Stock() {
   return (
     <div className="page">
       <div className={`stock-filters-header${headerVisible ? '' : ' hidden'}`}>
-        <div style={{ position: 'relative' }}>
-          <input
-            type="text"
-            placeholder="Αναζήτηση προϊόντος..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            className="scan-input"
-            style={{ paddingRight: search ? 36 : undefined }}
-          />
-          {search && (
-            <button
-              type="button"
-              onClick={() => setSearch('')}
-              aria-label="Καθαρισμός"
-              style={{
-                position: 'absolute', right: 8, top: '50%',
-                transform: 'translateY(-50%)', border: 'none',
-                background: 'transparent', fontSize: 20,
-                cursor: 'pointer', color: '#888', padding: '0 6px', lineHeight: 1,
-              }}
-            >×</button>
-          )}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ position: 'relative', flex: 2, minWidth: 0 }}>
+            <input
+              type="text"
+              placeholder="Τίτλος προϊόντος..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="scan-input"
+              style={{ paddingRight: search ? 36 : undefined, width: '100%' }}
+            />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch('')}
+                aria-label="Καθαρισμός"
+                style={{
+                  position: 'absolute', right: 8, top: '50%',
+                  transform: 'translateY(-50%)', border: 'none',
+                  background: 'transparent', fontSize: 20,
+                  cursor: 'pointer', color: '#888', padding: '0 6px', lineHeight: 1,
+                }}
+              >×</button>
+            )}
+          </div>
+          <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
+            <input
+              type="text"
+              inputMode="numeric"
+              placeholder="SKU..."
+              value={skuSearch}
+              onChange={e => setSkuSearch(e.target.value)}
+              className="scan-input"
+              style={{ paddingRight: skuSearch ? 36 : undefined, width: '100%' }}
+            />
+            {skuSearch && (
+              <button
+                type="button"
+                onClick={() => setSkuSearch('')}
+                aria-label="Καθαρισμός"
+                style={{
+                  position: 'absolute', right: 8, top: '50%',
+                  transform: 'translateY(-50%)', border: 'none',
+                  background: 'transparent', fontSize: 20,
+                  cursor: 'pointer', color: '#888', padding: '0 6px', lineHeight: 1,
+                }}
+              >×</button>
+            )}
+          </div>
         </div>
 
         <div className="filters-row" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -290,17 +307,29 @@ export default function Stock() {
         )}
       </div>
 
-      {loading ? <p>Φόρτωση...</p> : (
+      {loading ? <p>Φόρτωση...</p> : !hasActiveFilters ? (
+        <p className="empty" style={{ textAlign: 'center', color: '#888', marginTop: 32 }}>
+          Συμπλήρωσε ένα πεδίο αναζήτησης ή φίλτρο
+        </p>
+      ) : (
         <div className="scard-list" ref={listRef}>
           {filtered.map(item => (
             <div
-              key={item.id}
+              key={item.sku}
               className="scard"
-              onClick={() => window.open(item.site_url || productUrl(item.sku, item.name), '_blank')}
+              onClick={() => item.site_url && window.open(item.site_url, '_blank')}
             >
-              <div className="scard-name">
-                {item.brand ? <span className="scard-brand">{item.brand} </span> : null}
-                {item.name}
+              <div className="scard-name" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                <span style={{ flex: 1 }}>
+                  {item.brand ? <span className="scard-brand">{item.brand} </span> : null}
+                  {item.name}
+                </span>
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); setPrintSku(item.sku) }}
+                  title="Εκτύπωση label"
+                  style={{ background: 'transparent', border: '1px solid #ccc', borderRadius: 4, padding: '2px 6px', cursor: 'pointer', fontSize: 14 }}
+                >🖨</button>
               </div>
               <div className="scard-bottom">
                 <span className="scard-meta">
@@ -308,6 +337,7 @@ export default function Stock() {
                   {item.locations && item.locations.length > 0 && (
                     <> · <span className="scard-locs">{item.locations.map(l => `${l.location}:${l.qty}`).join('  ')}</span></>
                   )}
+                  <> · <span style={{ color: '#999' }} title="Stock στο ecommerce (πληροφοριακό)">ecom: {item.ecom_stock}</span></>
                 </span>
                 <span className={`scard-qty${item.total_quantity === 0 ? ' zero' : ''}`}>
                   {item.total_quantity} {item.unit}
@@ -317,6 +347,7 @@ export default function Stock() {
           ))}
         </div>
       )}
+      {printSku && <PrintLabelModal sku={printSku} onClose={() => setPrintSku(null)} />}
     </div>
   )
 }

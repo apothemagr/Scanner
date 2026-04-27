@@ -110,6 +110,28 @@ export async function closePool(): Promise<void> {
     await _pool.close()
     _pool = null
   }
+  if (_ecomPool) {
+    await _ecomPool.close()
+    _ecomPool = null
+  }
+}
+
+// ── Ecommerce DB pool (webapothema on 192.168.199.13) ──────────────────────
+let _ecomPool: sql.ConnectionPool | null = null
+
+export async function getEcomPool(): Promise<sql.ConnectionPool> {
+  if (!_ecomPool || !_ecomPool.connected) {
+    _ecomPool = await new sql.ConnectionPool({
+      server: process.env.ECOM_DB_SERVER || '192.168.199.13',
+      database: process.env.ECOM_DB_NAME || 'webapothema',
+      user: process.env.ECOM_DB_USER || 'sa',
+      password: process.env.ECOM_DB_PASSWORD || 'Ares4th!',
+      port: 1433,
+      options: { encrypt: false, trustServerCertificate: true, enableArithAbort: true },
+      pool: { max: 5, min: 0, idleTimeoutMillis: 30000 },
+    }).connect()
+  }
+  return _ecomPool
 }
 
 // Parse FOR JSON PATH result — SQL Server returns a JSON string from subqueries

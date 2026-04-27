@@ -1,12 +1,13 @@
 import { useState, useEffect } from 'react'
+import { API, authFetch } from '../api'
 import BarcodeScanner from '../components/BarcodeScanner'
 
-const API = import.meta.env.VITE_API_URL || 'http://localhost:3001/api'
 
 interface PickingOrder {
   id: number
   entersoft_so_id: string
   customer_name: string
+  web_order_id: string | null
   order_type: 'pickup' | 'courier'
   transporter: string
   voucher_qty: number
@@ -27,13 +28,14 @@ function formatTime(dateStr: string | null): string {
 }
 
 interface PickingItem {
-  product_id: number
   sku: string
   name: string
   unit: string
   required_qty: number
   picked_qty: number
   location_code: string | null
+  supplier_sku: string | null
+  total_stock: number
 }
 
 interface OrderDetail extends PickingOrder {
@@ -41,9 +43,8 @@ interface OrderDetail extends PickingOrder {
 }
 
 interface ScannedProduct {
-  product_id: number
-  name: string
   sku: string
+  name: string
   unit: string
   location_code: string | null
   location_id: number | null
@@ -55,6 +56,7 @@ interface ScannedProduct {
 
 type Step = 'list' | 'order' | 'scan_location'
 type StatusFilter = 'all' | 'open' | 'in_progress' | 'completed'
+type Tab = 'pickup' | 'courier' | 'skroutz'
 
 const STATUS_LABEL: Record<string, string> = {
   open: 'Εκκρεμεί',
@@ -68,13 +70,13 @@ const STATUS_COLOR: Record<string, string> = {
 }
 
 export default function ScanOut() {
-  const [tab, setTab] = useState<'pickup' | 'courier'>('pickup')
+  const [tab, setTab] = useState<Tab>('pickup')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('open')
   const [orders, setOrders] = useState<PickingOrder[]>([])
   const [selected, setSelected] = useState<OrderDetail | null>(null)
   const [step, setStep] = useState<Step>('list')
   const [popup, setPopup] = useState<ScannedProduct | null>(null)
-  const [unpickPopup, setUnpickPopup] = useState<{ product_id: number; name: string; sku: string; unit: string; location_code: string | null; picked_qty: number } | null>(null)
+  const [unpickPopup, setUnpickPopup] = useState<{ name: string; sku: string; unit: string; location_code: string | null; picked_qty: number } | null>(null)
   const [pendingLocation, setPendingLocation] = useState<ScannedProduct | null>(null)
   const [pendingUnpick, setPendingUnpick] = useState<typeof unpickPopup>(null)
   const [message, setMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null)
@@ -116,14 +118,15 @@ export default function ScanOut() {
     try {
       const s = status ?? statusFilter
       const params = s !== 'all' ? `?status=${s}` : ''
-      const res = await fetch(`${API}/scan-out/pickings${params}`)
+      const res = await authFetch(`${API}/scan-out/pickings${params}`)
+      if (!res.ok) { setOrders([]); return }
       setOrders(await res.json())
     } catch { /* skip */ }
     setLoading(false)
   }
 
   const openOrder = async (id: number) => {
-    const res = await fetch(`${API}/scan-out/pickings/${id}`)
+    const res = await authFetch(`${API}/scan-out/pickings/${id}`)
     const data = await res.json()
     setSelected(data)
     setStep('order')
@@ -132,7 +135,7 @@ export default function ScanOut() {
   const handleProductScan = async (code: string) => {
     if (!selected) return
     try {
-      const res = await fetch(`${API}/scan-out/pickings/${selected.id}/scan-product`, {
+      const res = await authFetch(`${API}/scan-out/pickings/${selected.id}/scan-product`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ barcode_or_sku: code }),
@@ -156,14 +159,14 @@ export default function ScanOut() {
     // Un-pick mode
     if (pendingUnpick) {
       try {
-        const res = await fetch(`${API}/scan-out/pickings/${selected.id}/unpick`, {
+        const res = await authFetch(`${API}/scan-out/pickings/${selected.id}/unpick`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ product_id: pendingUnpick.product_id, location_code: code, quantity: pendingUnpick.picked_qty }),
+          body: JSON.stringify({ sku: pendingUnpick.sku, location_code: code, quantity: pendingUnpick.picked_qty }),
         })
         const data = await res.json()
         if (!res.ok) { showMessage(data.error, 'error'); return }
-        showMessage(`↩ ${data.product} → ${data.location}`, 'success')
+        showMessage(`↩ ${data.sku} → ${data.location}`, 'success')
         setPendingUnpick(null)
         setStep('list')
         setSelected(null)
@@ -174,12 +177,12 @@ export default function ScanOut() {
 
     if (!pendingLocation) return
     try {
-      const res = await fetch(`${API}/scan-out/pickings/${selected.id}/scan-location`, {
+      const res = await authFetch(`${API}/scan-out/pickings/${selected.id}/scan-location`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           location_code: code,
-          product_id: pendingLocation.product_id,
+          sku: pendingLocation.sku,
           quantity: pendingLocation.qty,
         }),
       })
@@ -193,7 +196,7 @@ export default function ScanOut() {
         setPendingLocation(null)
         loadOrders()
       } else {
-        showMessage(`✓ ${data.product} (${data.picked}/${data.required})`, 'success')
+        showMessage(`✓ ${data.sku} (${data.picked}/${data.required})`, 'success')
         setPendingLocation(null)
         setStep('list')
         setSelected(null)
@@ -207,14 +210,14 @@ export default function ScanOut() {
   const handleUnpickDirect = async (item: typeof unpickPopup) => {
     if (!selected || !item) return
     try {
-      const res = await fetch(`${API}/scan-out/pickings/${selected.id}/unpick`, {
+      const res = await authFetch(`${API}/scan-out/pickings/${selected.id}/unpick`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ product_id: item.product_id, location_code: item.location_code, quantity: item.picked_qty }),
+        body: JSON.stringify({ sku: item.sku, location_code: item.location_code, quantity: item.picked_qty }),
       })
       const data = await res.json()
       if (!res.ok) { showMessage(data.error, 'error'); return }
-      showMessage(`↩ ${data.product} → ${data.location}`, 'success')
+      showMessage(`↩ ${data.sku} → ${data.location}`, 'success')
       setStep('list')
       setSelected(null)
       loadOrders(statusFilter)
@@ -223,7 +226,7 @@ export default function ScanOut() {
 
   const confirmPick = async () => {
     if (!popup) return
-    if (popup.location_code) {
+    if (popup.single_location || popup.location_code) {
       setPopup(null)
       await handleLocationScanDirect(popup)
     } else {
@@ -236,10 +239,10 @@ export default function ScanOut() {
   const handleLocationScanDirect = async (item: ScannedProduct) => {
     if (!selected) return
     try {
-      const res = await fetch(`${API}/scan-out/pickings/${selected.id}/scan-location`, {
+      const res = await authFetch(`${API}/scan-out/pickings/${selected.id}/scan-location`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ location_code: item.location_code, product_id: item.product_id, quantity: item.qty }),
+        body: JSON.stringify({ location_code: item.location_code, sku: item.sku, quantity: item.qty }),
       })
       const data = await res.json()
       if (!res.ok) { showMessage(data.error, 'error'); return }
@@ -248,7 +251,7 @@ export default function ScanOut() {
         setStep('list'); setSelected(null)
         loadOrders(statusFilter)
       } else {
-        showMessage(`✓ ${data.product} → ${item.location_code}`, 'success')
+        showMessage(`✓ ${data.sku} → ${item.location_code}`, 'success')
         setStep('list')
         setSelected(null)
         loadOrders(statusFilter)
@@ -256,7 +259,14 @@ export default function ScanOut() {
     } catch { showMessage('Σφάλμα σύνδεσης', 'error') }
   }
 
-  const displayOrders = orders.filter(o => o.order_type === tab)
+  const isSkroutz = (o: PickingOrder) => !!o.web_order_id?.startsWith('DAB')
+  const displayOrders = orders
+    .filter(o =>
+      tab === 'skroutz'
+        ? isSkroutz(o)
+        : o.order_type === tab && !isSkroutz(o)
+    )
+    .sort((a, b) => new Date(a.invoice_date).getTime() - new Date(b.invoice_date).getTime())
   const pending = selected?.items.filter(i => i.picked_qty < i.required_qty) || []
   const done = selected?.items.filter(i => i.picked_qty >= i.required_qty) || []
 
@@ -311,9 +321,11 @@ export default function ScanOut() {
 
         <div className="page-header">
           <button className="btn-back" onClick={() => { setSelected(null); setStep('list') }}>← Πίσω</button>
-          <div style={{ flex: 1 }}>
-            <h2 style={{ fontSize: '1rem' }}>{selected.customer_name}</h2>
-            <span className="order-id">{selected.entersoft_so_id}</span>
+          <div style={{ flex: 1, textAlign: 'center', display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <span style={{ fontSize: '0.78rem', color: '#888' }}>{selected.entersoft_so_id}</span>
+            {selected.web_order_id && (
+              <span style={{ fontSize: '0.78rem', color: '#888' }}>#{selected.web_order_id}</span>
+            )}
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
             <span className="order-status-badge" style={{ background: STATUS_COLOR[selected.status] }}>
@@ -324,15 +336,24 @@ export default function ScanOut() {
             )}
           </div>
         </div>
+        <div style={{ textAlign: 'center', fontSize: '0.95rem', color: '#1a1a2e', fontWeight: 600, marginBottom: 8 }}>
+          {selected.customer_name}
+        </div>
 
-        <BarcodeScanner onScan={handleProductScan} placeholder="Σκανάρισμα προϊόντος..." paused={!!popup} />
+        <BarcodeScanner
+          onScan={handleProductScan}
+          placeholder="Σκανάρισμα προϊόντος..."
+          paused={!!popup}
+          searchScope={selected.items}
+          searchInPopup
+        />
 
         {pending.length > 0 && (
           <>
             <span style={{ fontSize: '0.8rem', color: '#666', paddingLeft: 2 }}>Εκκρεμή ({pending.length})</span>
             <div className="scard-list">
               {pending.map(item => (
-                <div key={item.product_id} className="scard" style={{ borderLeft: '3px solid #ffc107' }}>
+                <div key={item.sku} className="scard" style={{ borderLeft: '3px solid #ffc107' }}>
                   <div className="scard-name">{item.name || item.sku}</div>
                   <div className="scard-bottom">
                     <span className="scard-meta">
@@ -352,7 +373,7 @@ export default function ScanOut() {
             <span style={{ fontSize: '0.8rem', color: '#666', paddingLeft: 2 }}>Μαζεύτηκαν ({done.length})</span>
             <div className="scard-list" style={{ opacity: 0.5 }}>
               {done.map(item => (
-                <div key={item.product_id} className="scard">
+                <div key={item.sku} className="scard">
                   <div className="scard-bottom">
                     <span className="scard-name" style={{ fontSize: '0.88rem' }}>{item.name || item.sku}</span>
                     <span className="scard-qty" style={{ color: '#28a745' }}>✓</span>
@@ -429,9 +450,17 @@ export default function ScanOut() {
       {message && <div className={`message ${message.type}`}>{message.text}</div>}
 
       <div className="picking-tabs">
-        <button className={`picking-tab${tab === 'pickup' ? ' active' : ''}`} onClick={() => setTab('pickup')}>
+        <button className={`picking-tab${tab === 'pickup' ? ' active' : ''}`} style={tab === 'pickup' ? { background: '#dc3545', borderColor: '#dc3545' } : {}} onClick={() => setTab('pickup')}>
           Παραλαβή
-          <span className="tab-count">{orders.filter(o => o.order_type === 'pickup').length}</span>
+          <span className="tab-count">{orders.filter(o => o.order_type === 'pickup' && !o.web_order_id?.startsWith('DAB')).length}</span>
+        </button>
+        <button
+          className={`picking-tab${tab === 'skroutz' ? ' active' : ''}`}
+          style={tab === 'skroutz' ? { background: '#f57224', borderColor: '#f57224' } : {}}
+          onClick={() => setTab('skroutz')}
+        >
+          Skroutz
+          <span className="tab-count">{orders.filter(o => o.web_order_id?.startsWith('DAB')).length}</span>
         </button>
         <button className={`picking-tab${tab === 'courier' ? ' active' : ''}`} onClick={() => setTab('courier')}>
           Courier
@@ -454,11 +483,16 @@ export default function ScanOut() {
       {loading ? <p>Φόρτωση...</p> : displayOrders.length === 0 ? (
         <p className="empty">Δεν υπάρχουν ανοιχτές παραγγελίες</p>
       ) : (
-        <div className="scard-list">
+        <div className={`scard-list scard-list-${tab}`}>
           {displayOrders.map(o => (
             <div key={o.id} className="scard" onClick={() => openOrder(o.id)}>
               <div className="scard-name" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span>{o.customer_name}</span>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                  <span>{o.customer_name}</span>
+                  {o.web_order_id && (
+                    <span style={{ fontSize: '0.78rem', color: '#888', fontWeight: 400 }}>#{o.web_order_id}</span>
+                  )}
+                </div>
                 <span className="order-status-badge" style={{ background: STATUS_COLOR[o.status] }}>
                   {STATUS_LABEL[o.status] ?? o.status}
                 </span>
@@ -467,7 +501,7 @@ export default function ScanOut() {
                 <span className="scard-meta">
                   {o.entersoft_so_id}
                   {o.voucher_qty > 1 && <> · <span className="scard-locs">{o.voucher_qty} δέμ.</span></>}
-                  {' · '}<span className="scard-locs">{formatTime(o.created_at)}</span>
+                  {' · '}<span className="scard-locs">{formatTime(o.invoice_date)}</span>
                 </span>
                 <span className="scard-qty">{Math.round(Number(o.picked_count))}/{Math.round(Number(o.item_count))} είδη</span>
               </div>

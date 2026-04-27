@@ -28,15 +28,24 @@ router.post('/', async (req, res) => {
 })
 
 router.get('/:id/stock', async (req, res) => {
-  const result = await query(
-    `SELECT p.sku, p.name, p.barcode, CAST(s.quantity AS INT) AS quantity, p.unit
+  const stockRes = await query(
+    `SELECT s.sku, CAST(s.quantity AS INT) AS quantity
      FROM stock s WITH (NOLOCK)
-     JOIN products p WITH (NOLOCK) ON p.id = s.product_id
-     WHERE s.location_id = $1 AND s.quantity > 0
-     ORDER BY p.name`,
+     WHERE s.location_id = $1 AND s.quantity > 0`,
     [req.params.id]
   )
-  return res.json(result.rows)
+  const { getProductsBySkus } = await import('../services/productService')
+  const skus = stockRes.rows.map(r => String(r.sku))
+  const map = await getProductsBySkus(skus)
+  const merged = stockRes.rows
+    .map(r => {
+      const p = map.get(String(r.sku))
+      if (!p) return null
+      return { sku: p.sku, name: p.name, barcode: p.barcode, unit: p.unit, quantity: Number(r.quantity) }
+    })
+    .filter(Boolean)
+    .sort((a, b) => (a!.name || '').localeCompare(b!.name || ''))
+  return res.json(merged)
 })
 
 export default router
