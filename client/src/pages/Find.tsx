@@ -165,8 +165,7 @@ export default function Find() {
           <thead>
             <tr style={{ background: '#1a1a2e', color: 'white', textAlign: 'left' }}>
               <th style={thStyle}>SKU</th>
-              <th style={thStyle}>Όνομα</th>
-              <th style={thStyle}>Μάρκα</th>
+              <th style={thStyle}>Προϊόν</th>
               <th style={thStyle}>Προμηθευτής</th>
               <th style={{ ...thStyle, textAlign: 'right' }}>Τοποθεσίες</th>
               <th style={{ ...thStyle, textAlign: 'right', width: 100 }}>Στοκ</th>
@@ -186,8 +185,10 @@ export default function Find() {
                 onMouseLeave={e => (e.currentTarget.style.background = i % 2 === 0 ? 'white' : '#f8f9fa')}
               >
                 <td style={{ ...tdStyle, fontFamily: 'monospace', color: '#666' }}>{item.sku}</td>
-                <td style={tdStyle}>{item.name}</td>
-                <td style={tdStyle}>{item.brand || '—'}</td>
+                <td style={tdStyle}>
+                  {item.brand && <span style={{ color: '#1a6fa8', fontWeight: 600 }}>{item.brand} </span>}
+                  {item.name}
+                </td>
                 <td style={tdStyle}>{item.supplier || '—'}</td>
                 <td style={{ ...tdStyle, textAlign: 'right' }}>
                   {item.locations && item.locations.length > 0 ? (
