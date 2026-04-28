@@ -35,7 +35,7 @@ function AppInner() {
   })
 
   return (
-    <div className="app">
+    <div className={`app${path === '/find' ? ' app--fullwidth' : ''}`}>
       <main className="app-main">
         {user.can_receipts && <div style={pane(path === '/')}><ScanIn /></div>}
         {user.can_orders && <div style={pane(path === '/scan-out')}><ScanOut /></div>}
