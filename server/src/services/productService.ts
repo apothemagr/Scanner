@@ -1,5 +1,37 @@
 import sql from 'mssql'
 import { getEcomPool, query } from '../db'
+import { tokenize, tokenVariants } from './searchUtils'
+
+// Χτίζει WHERE clause για αναζήτηση κειμένου με tokens (AND) + greeklish variants (OR ανά token).
+// Επιστρέφει { clause, addInputs } — το addInputs καλείται με το request για να βάλει τα @params.
+function buildTextSearchClause(
+  q: string,
+  column: string,
+  paramPrefix: string,
+  collate: boolean,
+): { clause: string; addInputs: (req: sql.Request) => void } | null {
+  const tokens = tokenize(q)
+  if (tokens.length === 0) return null
+  const colExpr = collate ? `${column} COLLATE Greek_CI_AI` : column
+  const inputs: Array<{ name: string; value: string }> = []
+  const tokenClauses: string[] = []
+  tokens.forEach((tok, ti) => {
+    const variants = tokenVariants(tok)
+    const variantClauses = variants.map((v, vi) => {
+      const name = `${paramPrefix}_${ti}_${vi}`
+      inputs.push({ name, value: `%${v}%` })
+      const right = collate ? `@${name} COLLATE Greek_CI_AI` : `@${name}`
+      return `${colExpr} LIKE ${right}`
+    })
+    tokenClauses.push(`(${variantClauses.join(' OR ')})`)
+  })
+  return {
+    clause: tokenClauses.join(' AND '),
+    addInputs: (req) => {
+      for (const { name, value } of inputs) req.input(name, sql.NVarChar, value)
+    },
+  }
+}
 
 export interface EcomProduct {
   sku: string
@@ -117,8 +149,11 @@ export async function filterProducts(f: ProductFilter): Promise<EcomProduct[]> {
   const where: string[] = []
   const req = pool.request()
   if (f.q && f.q.trim()) {
-    where.push('Model LIKE @q')
-    req.input('q', sql.NVarChar, `%${f.q.trim()}%`)
+    const built = buildTextSearchClause(f.q, 'Model', 'q', true)
+    if (built) {
+      where.push(built.clause)
+      built.addInputs(req)
+    }
   }
   if (f.sku && f.sku.trim()) {
     where.push('CAST(ReferenceCode AS NVARCHAR(50)) LIKE @sku')
@@ -151,22 +186,30 @@ export async function filterProducts(f: ProductFilter): Promise<EcomProduct[]> {
 export async function searchProducts(q: string, field: 'name' | 'sku' | 'supplier_sku', limit = 10): Promise<EcomProduct[]> {
   if (!q || q.trim().length < 2) return []
   const pool = await getEcomPool()
-  const like = `%${q.trim()}%`
   const col = field === 'sku'
     ? 'CAST(ReferenceCode AS NVARCHAR(50))'
     : field === 'supplier_sku'
       ? 'SKU'
       : 'Model'
-  const r = await pool.request()
-    .input('q', sql.NVarChar, like)
-    .input('lim', sql.Int, limit)
-    .query(`SELECT TOP (@lim)
+  const req = pool.request().input('lim', sql.Int, limit)
+  let whereClause: string
+  if (field === 'name') {
+    // Tokens (AND) + greeklish variants (OR), accent-insensitive
+    const built = buildTextSearchClause(q, col, 'q', true)
+    if (!built) return []
+    whereClause = built.clause
+    built.addInputs(req)
+  } else {
+    whereClause = `${col} LIKE @q`
+    req.input('q', sql.NVarChar, `%${q.trim()}%`)
+  }
+  const r = await req.query(`SELECT TOP (@lim)
             CAST(ReferenceCode AS NVARCHAR(50)) AS sku,
             Model AS name, EAN AS barcode, SKU AS supplier_sku,
             Brand AS brand, Supplier AS supplier,
             StockQty AS ecom_stock, URL AS url
             FROM ecomProductPickingView WITH (NOLOCK)
-            WHERE ${col} LIKE @q
+            WHERE ${whereClause}
             ORDER BY ${col}`)
   return r.recordset.map(mapRow)
 }
