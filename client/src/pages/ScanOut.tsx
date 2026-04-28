@@ -84,7 +84,7 @@ export default function ScanOut() {
 
   useEffect(() => {
     loadOrders(statusFilter)
-    const interval = setInterval(() => loadOrders(statusFilter), 45000)
+    const interval = setInterval(() => loadOrders(statusFilter), 30000)
     return () => clearInterval(interval)
   }, [statusFilter])
 
@@ -451,7 +451,7 @@ export default function ScanOut() {
 
       <div className="picking-tabs">
         <button className={`picking-tab${tab === 'pickup' ? ' active' : ''}`} style={tab === 'pickup' ? { background: '#dc3545', borderColor: '#dc3545' } : {}} onClick={() => setTab('pickup')}>
-          Παραλαβή
+          Pickup
           <span className="tab-count">{orders.filter(o => o.order_type === 'pickup' && !o.web_order_id?.startsWith('DAB')).length}</span>
         </button>
         <button
