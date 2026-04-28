@@ -1,5 +1,6 @@
-import { Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useState } from 'react'
+import type React from 'react'
 import { AuthProvider, useAuth } from './auth'
 import ScanIn from './pages/ScanIn'
 import ScanOut from './pages/ScanOut'
@@ -21,24 +22,34 @@ function AppInner() {
   if (loading) return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100dvh', fontSize: '2rem' }}>⏳</div>
   if (!user) return <Login />
 
+  // Keep-alive: όλες οι σελίδες παραμένουν mounted ώστε να διατηρείται state/scroll
+  // όταν ο χρήστης αλλάζει tab. Μόνο η ενεργή είναι visible.
+  const path = location.pathname
+  const knownPaths = ['/', '/scan-out', '/stock', '/transfer', '/print-label', '/reports', '/find', '/admin']
+  const isUnknown = !knownPaths.includes(path)
+  const pane = (visible: boolean): React.CSSProperties => ({
+    display: visible ? 'flex' : 'none',
+    flexDirection: 'column',
+    flex: 1,
+    minHeight: 0,
+  })
+
   return (
     <div className="app">
       <main className="app-main">
-        <Routes>
-          {user.can_receipts && <Route path="/" element={<ScanIn />} />}
-          {user.can_orders && <Route path="/scan-out" element={<ScanOut />} />}
-          {user.can_stock && <Route path="/stock" element={<Stock />} />}
-          {user.can_stock && <Route path="/transfer" element={<Transfer />} />}
-          {user.can_stock && <Route path="/print-label" element={<PrintLabel />} />}
-          {user.can_stock && <Route path="/reports" element={<Reports />} />}
-          {user.can_stock && <Route path="/find" element={<Find />} />}
-          {user.is_admin && <Route path="/admin" element={<Admin />} />}
-          <Route path="*" element={
-            <div style={{ padding: 32, textAlign: 'center', color: '#888' }}>
-              <p>Δεν έχεις πρόσβαση σε αυτή τη σελίδα.</p>
-            </div>
-          } />
-        </Routes>
+        {user.can_receipts && <div style={pane(path === '/')}><ScanIn /></div>}
+        {user.can_orders && <div style={pane(path === '/scan-out')}><ScanOut /></div>}
+        {user.can_stock && <div style={pane(path === '/stock')}><Stock /></div>}
+        {user.can_stock && <div style={pane(path === '/transfer')}><Transfer /></div>}
+        {user.can_stock && <div style={pane(path === '/print-label')}><PrintLabel /></div>}
+        {user.can_stock && <div style={pane(path === '/reports')}><Reports /></div>}
+        {user.can_stock && <div style={pane(path === '/find')}><Find /></div>}
+        {user.is_admin && <div style={pane(path === '/admin')}><Admin /></div>}
+        {isUnknown && (
+          <div style={{ padding: 32, textAlign: 'center', color: '#888' }}>
+            <p>Δεν έχεις πρόσβαση σε αυτή τη σελίδα.</p>
+          </div>
+        )}
       </main>
       {location.pathname !== '/find' && (
       <nav className="app-footer">
