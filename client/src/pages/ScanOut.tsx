@@ -84,7 +84,7 @@ export default function ScanOut() {
 
   useEffect(() => {
     loadOrders(statusFilter)
-    const interval = setInterval(() => loadOrders(statusFilter), 30000)
+    const interval = setInterval(() => loadOrders(statusFilter), 30 * 60 * 1000)
     return () => clearInterval(interval)
   }, [statusFilter])
 
